@@ -5,6 +5,7 @@
 ### Fixed
 - The Claude helper now loads the `System.Security` assembly before calling `ProtectedData::Unprotect`, so cookie decryption no longer fails on machines that only have Windows PowerShell 5.1.
 - PowerShell invocation failures now report the underlying error from each candidate executable instead of a generic message.
+- `start` now launches the watcher when more than one `node` executable is on `PATH`, instead of failing with a `Start-Process` argument type error.
 
 ## 0.3.13 - 2026-07-28
 
