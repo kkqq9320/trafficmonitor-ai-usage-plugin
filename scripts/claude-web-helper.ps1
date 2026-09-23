@@ -4,6 +4,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'helper-common.ps1')
+$helperMarker = 'claude-web-helper'
 
 $helperDirCandidates = @(
     (Join-Path $PSScriptRoot 'helper\claude-web-helper'),
@@ -69,32 +71,7 @@ function Test-HelperWatchProcess {
         [object]$WatchLock
     )
 
-    if ($ProcessId -le 0 -or -not $WatchLock -or [string]$WatchLock.mode -ne 'watch') {
-        return $false
-    }
-
-    try {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
-        if (-not $process -or $process.Name -ne 'node.exe') {
-            return $false
-        }
-
-        $commandLine = [string]$process.CommandLine
-        if ($commandLine -notmatch '(?i)index\.mjs' -or $commandLine -notmatch '(?i)(^|\s)watch(\s|$)') {
-            return $false
-        }
-
-        $lockStartedAt = [DateTimeOffset]::Parse(
-            [string]$WatchLock.started_at,
-            [System.Globalization.CultureInfo]::InvariantCulture,
-            [System.Globalization.DateTimeStyles]::AssumeUniversal
-        ).ToUniversalTime()
-        $processStartedAt = ([DateTimeOffset]$process.CreationDate).ToUniversalTime()
-        $startDifference = [Math]::Abs(($lockStartedAt - $processStartedAt).TotalSeconds)
-        return $startDifference -le 30
-    } catch {
-        return $false
-    }
+    return Test-AiUsageHelperWatchProcess -ProcessId $ProcessId -WatchLock $WatchLock -Marker $helperMarker
 }
 
 function Get-WatchLockData {
@@ -132,13 +109,29 @@ function Get-HelperNodeProcesses {
         Where-Object {
             $_.Name -eq 'node.exe' -and
             $_.CommandLine -match 'index\.mjs' -and
+            $_.CommandLine -match [regex]::Escape($helperMarker) -and
             $_.CommandLine -match '\b(login|once|watch)\b'
         } |
         Sort-Object ProcessId
 }
 
+function Resolve-NodeOrWriteStatus {
+    try {
+        return Resolve-AiUsageHelperNode -MinimumMajor 22
+    } catch {
+        Write-AiUsageHelperStatus -Path $statusPath -State 'node_missing' -ErrorText $_.Exception.Message
+        throw
+    }
+}
+
 function Show-Status {
     Write-Host "Helper dir: $helperDir"
+    try {
+        $statusNodePath = Resolve-AiUsageHelperNode -MinimumMajor 22
+        Write-Host "Node: $statusNodePath ($(& $statusNodePath --version))"
+    } catch {
+        Write-Host "Node: unavailable ($($_.Exception.Message))"
+    }
     Write-Host "Profile dir: $(Join-Path $baseDir 'claude-browser-profile')"
     Write-Host (Format-FileStatus $usagePath)
     Write-Host (Format-FileStatus $statusPath)
@@ -226,7 +219,8 @@ function Start-HiddenWatch {
         }
     }
 
-    $nodePath = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+    $nodePath = Resolve-NodeOrWriteStatus
+    Test-NodeSqliteSupport -NodePath $nodePath
     $helperScriptPath = Join-Path $helperDir 'index.mjs'
     $escapedHelperScriptPath = $helperScriptPath.Replace('"', '\"')
     $arguments = "--disable-warning=ExperimentalWarning `"$escapedHelperScriptPath`" watch"
@@ -237,7 +231,9 @@ function Start-HiddenWatch {
 }
 
 function Test-NodeSqliteSupport {
-    node --disable-warning=ExperimentalWarning -p "require('node:sqlite'); 'ok'" > $null 2>&1
+    param([string]$NodePath)
+
+    & $NodePath --disable-warning=ExperimentalWarning -p "require('node:sqlite'); 'ok'" > $null 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw 'Node.js 22+ with node:sqlite support is required for the Claude web helper.'
     }
@@ -247,7 +243,6 @@ Push-Location $helperDir
 try {
     switch ($Mode) {
         'start' {
-            Test-NodeSqliteSupport
             Start-HiddenWatch
             exit 0
         }
@@ -262,8 +257,9 @@ try {
             exit 0
         }
         default {
-            Test-NodeSqliteSupport
-            node --disable-warning=ExperimentalWarning index.mjs $Mode
+            $nodePath = Resolve-NodeOrWriteStatus
+            Test-NodeSqliteSupport -NodePath $nodePath
+            & $nodePath --disable-warning=ExperimentalWarning index.mjs $Mode
             exit $LASTEXITCODE
         }
     }

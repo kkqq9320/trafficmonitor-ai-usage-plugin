@@ -1,0 +1,13 @@
+{
+  "name": "trafficmonitor-codex-usage-helper",
+  "private": true,
+  "version": "0.4.0",
+  "type": "module",
+  "description": "Codex usage limit helper for the TrafficMonitor AI Usage Limits plugin. No dependencies.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

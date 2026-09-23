@@ -47,7 +47,8 @@ try {
     New-Item -ItemType Directory -Path $baseDir -Force | Out-Null
     $env:LOCALAPPDATA = $testRoot
 
-    $nodePath = (Get-Command node -CommandType Application).Source
+    . (Join-Path $repoRoot 'scripts\helper-common.ps1')
+    $nodePath = Resolve-AiUsageHelperNode -MinimumMajor 22
     [System.IO.File]::WriteAllText(
         $dummyScriptPath,
         'setInterval(() => {}, 60000);',
