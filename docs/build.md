@@ -32,11 +32,35 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-claude-web-he
 The test confirms that a stale lock cannot cause an unrelated reused PID to be
 treated as, or terminated as, the helper watcher.
 
+Run the Codex selection regression tests (builds first, then loads the DLL for each scenario):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-codex-window-classification.ps1 -Platform x64
+```
+
+Run the helper tests (Node.js 22+) and the Codex helper wrapper test:
+
+```powershell
+node --test helper/codex-usage-helper/test/lib.test.mjs helper/codex-usage-helper/test/io.test.mjs helper/claude-web-helper/test/retry.test.mjs
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-codex-usage-helper-wrapper.ps1
+```
+
+These tests use temporary `LOCALAPPDATA` / `CODEX_HOME` folders and fake HTTP responses; they do not start Codex or contact OpenAI or Anthropic.
+
+To print what a built DLL shows for the current user profile:
+
+```powershell
+.\build\x64\Release\tests\CodexUsagePluginTests.exe .\build\x64\Release\plugins\ClaudeUsagePlugin.dll --print
+```
+
 ## Build Output
 
 - `build\x64\Release\plugins\ClaudeUsagePlugin.dll`
 - `build\x64\Release\plugins\ClaudeUsagePlugin\claude-web-helper.ps1`
+- `build\x64\Release\plugins\ClaudeUsagePlugin\codex-usage-helper.ps1`
+- `build\x64\Release\plugins\ClaudeUsagePlugin\helper-common.ps1`
 - `build\x64\Release\plugins\ClaudeUsagePlugin\helper\claude-web-helper\...`
+- `build\x64\Release\plugins\ClaudeUsagePlugin\helper\codex-usage-helper\...`
 - `build\Release\plugins\ClaudeUsagePlugin.dll`
 - `build\Release\plugins\ClaudeUsagePlugin\claude-web-helper.ps1`
 - `build\Release\plugins\ClaudeUsagePlugin\helper\claude-web-helper\...`

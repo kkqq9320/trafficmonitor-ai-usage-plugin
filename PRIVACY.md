@@ -28,17 +28,31 @@ To remove the local Claude helper data, stop the helper watcher, close
 TrafficMonitor, then delete
 `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin`.
 
-## Codex Session Files
+## Codex Usage Helper and Session Files
 
-Codex values are read from local Codex session JSONL files:
+Codex values come from the bundled Codex usage helper and, as a fallback, from
+local Codex session JSONL files:
 
 - Default path: `%USERPROFILE%\.codex\sessions\**\*.jsonl`
 - Override path: `CODEX_HOME\sessions\**\*.jsonl`
 
 Codex session files can contain sensitive session content, prompts, outputs,
 local paths, model metadata, tool metadata, and rate-limit events. The plugin
-opens these files locally and scans for rate-limit payloads. It does not upload
-Codex session files.
+and the helper open these files locally and scan only for rate-limit payloads.
+They do not upload Codex session files.
+
+The Codex usage helper:
+
+- starts a short-lived `codex app-server` and sends only `initialize` and
+  `account/rateLimits/read`. It never starts a thread or turn, so no model
+  request is made and no model tokens are used.
+- as a fallback, reads the ChatGPT access token and account id from
+  `CODEX_HOME\auth.json` and sends them only to
+  `https://chatgpt.com/backend-api/wham/usage`. It never refreshes, prints, or
+  writes the token.
+- writes `codex-usage.json` (usage percentages, reset times, plan type) and
+  `codex-usage-helper-status.json` (request times, error text, local paths)
+  under `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin`.
 
 Do not attach Codex session JSONL files to bug reports or release artifacts
 unless they have been sanitized.
@@ -47,7 +61,10 @@ unless they have been sanitized.
 
 - The Claude helper makes network requests to `https://claude.ai` when fetching
   Claude usage data.
-- The Codex reader is local-file based and does not make network requests.
+- The Codex usage helper requests Codex usage limits through `codex app-server`
+  (which talks to OpenAI) and, as a fallback, from
+  `https://chatgpt.com/backend-api/wham/usage`. The plugin DLL itself only reads
+  local files.
 - TrafficMonitor itself, Windows, Edge, Chrome, Claude, Codex, and related
   services may have their own network behavior outside this plugin.
 

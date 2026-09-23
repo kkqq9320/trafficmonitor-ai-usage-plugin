@@ -19,6 +19,7 @@ public:
         bool has_reset_time{};
         long long reset_at_unix_seconds{};
         std::wstring reset_time_text;
+        bool stale{};  // snapshot older than two helper refresh intervals, or reset time passed
     };
 
 public:
@@ -33,6 +34,9 @@ public:
         std::wstring tooltip_text{ L"Claude usage limits unavailable" };
         std::wstring error_text;
         std::wstring source_text{ L"Claude OAuth usage API" };
+        bool has_data_time{};
+        long long data_at_unix{};
+        unsigned long long refresh_ms{};
     };
 
     void RefreshIfNeeded();

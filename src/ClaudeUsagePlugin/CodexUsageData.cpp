@@ -1,186 +1,41 @@
 #include "pch.h"
 #include "CodexUsageData.h"
+#include "HelperSupport.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cwctype>
-#include <climits>
-#include <share.h>
 #include <string>
 #include <vector>
 
 namespace
 {
-constexpr unsigned long long REFRESH_INTERVAL_MS = 60ULL * 1000ULL;
-constexpr unsigned long long RETRY_INTERVAL_MS = 5ULL * 1000ULL;
-constexpr unsigned long long MAX_TEXT_FILE_SIZE = 32ULL * 1024ULL * 1024ULL;
-constexpr long long RECENT_EVENT_WINDOW_SECONDS = 15LL * 60LL;
-constexpr long long FIVE_HOUR_WINDOW_MINUTES = 5LL * 60LL;
-constexpr long long SEVEN_DAY_WINDOW_MINUTES = 7LL * 24LL * 60LL;
-constexpr wchar_t CODEX_SESSION_DIR_NAME[] = L"sessions";
+using Metric = CCodexUsageData::Metric;
+using RateLimitRecord = CCodexUsageData::RateLimitRecord;
 
-struct SessionFileCandidate
-{
-    std::wstring path;
-    FILETIME last_write_time{};
-};
+constexpr unsigned long long CHECK_INTERVAL_MS = 5ULL * 1000ULL;
+constexpr unsigned long long JSONL_REFRESH_INTERVAL_MS = 60ULL * 1000ULL;
+constexpr unsigned long long REBUILD_INTERVAL_MS = 60ULL * 1000ULL;
+constexpr long long STALE_AFTER_SECONDS = 30LL * 60LL;
+constexpr unsigned long long MAX_SMALL_FILE_SIZE = 1024ULL * 1024ULL;
+constexpr unsigned long long JSONL_CHUNK_BYTES = 1024ULL * 1024ULL;
+constexpr unsigned long long JSONL_TAIL_MAX_BYTES = 16ULL * 1024ULL * 1024ULL;
+// Codex keeps session files open while appending and Windows does not advance their mtime until
+// the handle closes, so mtime only approximates "recently opened". The newest files are scanned
+// and events are compared by their own timestamps.
+constexpr size_t JSONL_SCAN_MAX_FILES = 32;
+constexpr long long FIVE_HOUR_WINDOW_MINUTES = 300LL;
+constexpr long long SEVEN_DAY_WINDOW_MINUTES = 10080LL;
+constexpr long long WINDOW_TOLERANCE_MINUTES = 1LL;
+constexpr char CODEX_LIMIT_ID[] = "codex";
+constexpr wchar_t SNAPSHOT_FILE_NAME[] = L"codex-usage.json";
+constexpr wchar_t STATUS_FILE_NAME[] = L"codex-usage-helper-status.json";
+constexpr wchar_t WATCH_LOCK_FILE_NAME[] = L"codex-usage-helper-watch.lock";
+constexpr wchar_t HELPER_SCRIPT_NAME[] = L"codex-usage-helper.ps1";
 
-struct SessionSnapshotCandidate
-{
-    CCodexUsageData::Snapshot snapshot;
-    std::string event_timestamp;
-    bool has_event_unix_seconds{};
-    long long event_unix_seconds{};
-    FILETIME file_last_write_time{};
-    std::wstring file_path;
-};
-
-struct MetricSelection
-{
-    bool found{};
-    CCodexUsageData::Metric metric;
-    std::string event_timestamp;
-};
-
-std::wstring TrimString(const std::wstring& value)
-{
-    size_t start{};
-    while (start < value.size() && iswspace(value[start]))
-        ++start;
-
-    size_t end = value.size();
-    while (end > start && iswspace(value[end - 1]))
-        --end;
-
-    return value.substr(start, end - start);
-}
-
-std::wstring GetEnvVar(const wchar_t* name)
-{
-    const DWORD length = GetEnvironmentVariableW(name, nullptr, 0);
-    if (length <= 1)
-        return std::wstring();
-
-    std::wstring value(length - 1, L'\0');
-    GetEnvironmentVariableW(name, &value[0], length);
-    return value;
-}
-
-std::wstring JoinPath(const std::wstring& left, const std::wstring& right)
-{
-    if (left.empty())
-        return right;
-    if (left.back() == L'\\' || left.back() == L'/')
-        return left + right;
-    return left + L'\\' + right;
-}
-
-bool EndsWithIgnoreCase(const std::wstring& value, const wchar_t* suffix)
-{
-    const size_t suffix_length = wcslen(suffix);
-    if (value.size() < suffix_length)
-        return false;
-
-    const size_t start = value.size() - suffix_length;
-    for (size_t index = 0; index < suffix_length; ++index)
-    {
-        if (towlower(value[start + index]) != towlower(suffix[index]))
-            return false;
-    }
-    return true;
-}
-
-std::wstring NormalizePossibleWslPath(const std::wstring& path)
-{
-    if (path.size() >= 7 && path[0] == L'/' && path[1] == L'm' && path[2] == L'n' && path[3] == L't' && path[4] == L'/' && iswalpha(path[5]) && path[6] == L'/')
-    {
-        std::wstring converted;
-        converted.push_back(static_cast<wchar_t>(towupper(path[5])));
-        converted += L":";
-        converted += path.substr(6);
-        std::replace(converted.begin(), converted.end(), L'/', L'\\');
-        return converted;
-    }
-
-    return path;
-}
-
-std::wstring ExpandEnvironmentVariables(const std::wstring& text)
-{
-    if (text.find(L'%') == std::wstring::npos)
-        return text;
-
-    const DWORD required_size = ExpandEnvironmentStringsW(text.c_str(), nullptr, 0);
-    if (required_size <= 1)
-        return text;
-
-    std::wstring expanded(required_size, L'\0');
-    if (ExpandEnvironmentStringsW(text.c_str(), &expanded[0], required_size) == 0)
-        return text;
-
-    if (!expanded.empty() && expanded.back() == L'\0')
-        expanded.pop_back();
-    return expanded;
-}
-
-std::wstring GetCodexConfigDir()
-{
-    const std::wstring override_dir = NormalizePossibleWslPath(ExpandEnvironmentVariables(TrimString(GetEnvVar(L"CODEX_HOME"))));
-    if (!override_dir.empty())
-        return override_dir;
-
-    const std::wstring home = TrimString(GetEnvVar(L"USERPROFILE"));
-    if (home.empty())
-        return std::wstring();
-
-    return JoinPath(home, L".codex");
-}
-
-bool FileExists(const std::wstring& path)
-{
-    DWORD attributes = GetFileAttributesW(path.c_str());
-    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
-}
-
-bool DirectoryExists(const std::wstring& path)
-{
-    DWORD attributes = GetFileAttributesW(path.c_str());
-    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-}
-
-bool GetFileSizeBytes(const std::wstring& path, unsigned long long& size)
-{
-    WIN32_FILE_ATTRIBUTE_DATA attributes{};
-    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes))
-        return false;
-
-    size = (static_cast<unsigned long long>(attributes.nFileSizeHigh) << 32) | static_cast<unsigned long long>(attributes.nFileSizeLow);
-    return true;
-}
-
-bool ReadUtf8Line(FILE* file, std::string& line)
-{
-    line.clear();
-    if (file == nullptr)
-        return false;
-
-    char buffer[8192];
-    bool read_any = false;
-    while (fgets(buffer, sizeof(buffer), file) != nullptr)
-    {
-        read_any = true;
-        line += buffer;
-        if (strchr(buffer, '\n') != nullptr)
-            return true;
-        if (strlen(buffer) < sizeof(buffer) - 1)
-            return true;
-    }
-
-    return read_any;
-}
+// --- minimal JSON field access ------------------------------------------------
 
 bool FindJsonKey(const std::string& json, const char* key, size_t& value_pos)
 {
@@ -192,12 +47,16 @@ bool FindJsonKey(const std::string& json, const char* key, size_t& value_pos)
     if (key_pos == std::string::npos)
         return false;
 
-    const size_t colon_pos = json.find(':', key_pos + token.size());
-    if (colon_pos == std::string::npos)
+    size_t colon_pos = key_pos + token.size();
+    while (colon_pos < json.size() && isspace(static_cast<unsigned char>(json[colon_pos])))
+        ++colon_pos;
+    if (colon_pos >= json.size() || json[colon_pos] != ':')
         return false;
 
     value_pos = colon_pos + 1;
-    return true;
+    while (value_pos < json.size() && isspace(static_cast<unsigned char>(json[value_pos])))
+        ++value_pos;
+    return value_pos < json.size();
 }
 
 size_t FindMatchingBracket(const std::string& text, size_t open_pos, char open_char, char close_char)
@@ -205,7 +64,6 @@ size_t FindMatchingBracket(const std::string& text, size_t open_pos, char open_c
     bool in_string = false;
     bool escape = false;
     int depth = 0;
-
     for (size_t index = open_pos; index < text.size(); ++index)
     {
         const char ch = text[index];
@@ -219,23 +77,13 @@ size_t FindMatchingBracket(const std::string& text, size_t open_pos, char open_c
                 in_string = false;
             continue;
         }
-
         if (ch == '"')
-        {
             in_string = true;
-            continue;
-        }
-
-        if (ch == open_char)
+        else if (ch == open_char)
             ++depth;
-        else if (ch == close_char)
-        {
-            --depth;
-            if (depth == 0)
-                return index;
-        }
+        else if (ch == close_char && --depth == 0)
+            return index;
     }
-
     return std::string::npos;
 }
 
@@ -244,51 +92,49 @@ bool TryGetJsonDouble(const std::string& json, const char* key, double& value)
     size_t value_pos{};
     if (!FindJsonKey(json, key, value_pos))
         return false;
-
-    while (value_pos < json.size() && isspace(static_cast<unsigned char>(json[value_pos])))
-        ++value_pos;
-
-    if (value_pos >= json.size())
+    const char ch = json[value_pos];
+    if (ch != '-' && (ch < '0' || ch > '9'))
         return false;
-
     char* end_ptr{};
     value = strtod(json.c_str() + value_pos, &end_ptr);
-    return end_ptr != json.c_str() + value_pos;
+    return end_ptr != json.c_str() + value_pos && std::isfinite(value);
 }
 
 bool TryGetJsonInt64(const std::string& json, const char* key, long long& value)
 {
+    double number{};
+    if (!TryGetJsonDouble(json, key, number))
+        return false;
+    value = static_cast<long long>(number);
+    return true;
+}
+
+bool TryGetJsonBool(const std::string& json, const char* key, bool& value)
+{
     size_t value_pos{};
     if (!FindJsonKey(json, key, value_pos))
         return false;
-
-    while (value_pos < json.size() && isspace(static_cast<unsigned char>(json[value_pos])))
-        ++value_pos;
-
-    if (value_pos >= json.size())
-        return false;
-
-    char* end_ptr{};
-    value = _strtoi64(json.c_str() + value_pos, &end_ptr, 10);
-    return end_ptr != json.c_str() + value_pos;
+    if (json.compare(value_pos, 4, "true") == 0)
+    {
+        value = true;
+        return true;
+    }
+    if (json.compare(value_pos, 5, "false") == 0)
+    {
+        value = false;
+        return true;
+    }
+    return false;
 }
 
 bool TryGetJsonObject(const std::string& json, const char* key, std::string& value)
 {
     size_t value_pos{};
-    if (!FindJsonKey(json, key, value_pos))
+    if (!FindJsonKey(json, key, value_pos) || json[value_pos] != '{')
         return false;
-
-    while (value_pos < json.size() && isspace(static_cast<unsigned char>(json[value_pos])))
-        ++value_pos;
-
-    if (value_pos >= json.size() || json[value_pos] != '{')
-        return false;
-
     const size_t end_pos = FindMatchingBracket(json, value_pos, '{', '}');
     if (end_pos == std::string::npos)
         return false;
-
     value = json.substr(value_pos, end_pos - value_pos + 1);
     return true;
 }
@@ -296,54 +142,39 @@ bool TryGetJsonObject(const std::string& json, const char* key, std::string& val
 bool TryGetJsonString(const std::string& json, const char* key, std::string& value)
 {
     size_t value_pos{};
-    if (!FindJsonKey(json, key, value_pos))
+    if (!FindJsonKey(json, key, value_pos) || json[value_pos] != '"')
         return false;
 
-    while (value_pos < json.size() && isspace(static_cast<unsigned char>(json[value_pos])))
-        ++value_pos;
-
-    if (value_pos >= json.size() || json[value_pos] != '"')
-        return false;
-
-    ++value_pos;
     std::string parsed;
     bool escape = false;
-    for (size_t index = value_pos; index < json.size(); ++index)
+    for (size_t index = value_pos + 1; index < json.size(); ++index)
     {
         const char ch = json[index];
         if (escape)
         {
             parsed.push_back(ch);
             escape = false;
-            continue;
         }
-
-        if (ch == '\\')
+        else if (ch == '\\')
         {
             escape = true;
-            continue;
         }
-
-        if (ch == '"')
+        else if (ch == '"')
         {
             value = parsed;
             return true;
         }
-
-        parsed.push_back(ch);
+        else
+        {
+            parsed.push_back(ch);
+        }
     }
-
     return false;
 }
 
 bool TryParseIso8601UtcSeconds(const std::string& timestamp, long long& unix_seconds)
 {
-    int year{};
-    int month{};
-    int day{};
-    int hour{};
-    int minute{};
-    int second{};
+    int year{}, month{}, day{}, hour{}, minute{}, second{};
     if (sscanf_s(timestamp.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d", &year, &month, &day, &hour, &minute, &second) != 6)
         return false;
 
@@ -358,104 +189,415 @@ bool TryParseIso8601UtcSeconds(const std::string& timestamp, long long& unix_sec
     FILETIME file_time{};
     if (!SystemTimeToFileTime(&utc_time, &file_time))
         return false;
-
     ULARGE_INTEGER value{};
     value.LowPart = file_time.dwLowDateTime;
     value.HighPart = file_time.dwHighDateTime;
     if (value.QuadPart < 116444736000000000ULL)
         return false;
-
     unix_seconds = static_cast<long long>((value.QuadPart - 116444736000000000ULL) / 10000000ULL);
     return true;
 }
 
-bool UnixSecondsToLocalText(long long unix_seconds, std::wstring& text)
+// --- rate limit parsing -------------------------------------------------------
+
+bool LoadMetricObject(const std::string& metric_json, Metric& metric)
 {
-    if (unix_seconds < 0)
+    double used_percent{};
+    double remaining_percent{};
+    if (TryGetJsonDouble(metric_json, "used_percent", used_percent))
+        metric.percentage = used_percent;
+    else if (TryGetJsonDouble(metric_json, "remaining_percent", remaining_percent))
+        metric.percentage = 100.0 - remaining_percent;
+    else
         return false;
+    metric.percentage = (std::max)(0.0, (std::min)(100.0, metric.percentage));
+    metric.available = true;
 
-    FILETIME file_time{};
-    ULARGE_INTEGER value{};
-    value.QuadPart = (static_cast<unsigned long long>(unix_seconds) + 11644473600ULL) * 10000000ULL;
-    file_time.dwLowDateTime = value.LowPart;
-    file_time.dwHighDateTime = value.HighPart;
+    long long window_minutes{};
+    if (TryGetJsonInt64(metric_json, "window_minutes", window_minutes) && window_minutes > 0)
+    {
+        metric.has_window_minutes = true;
+        metric.window_minutes = window_minutes;
+    }
 
-    SYSTEMTIME utc_time{};
-    if (!FileTimeToSystemTime(&file_time, &utc_time))
-        return false;
-
-    SYSTEMTIME local_time{};
-    if (!SystemTimeToTzSpecificLocalTime(nullptr, &utc_time, &local_time))
-        return false;
-
-    const int date_length = GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &local_time, nullptr, nullptr, 0, nullptr);
-    if (date_length <= 1)
-        return false;
-
-    const int time_length = GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &local_time, nullptr, nullptr, 0);
-    if (time_length <= 1)
-        return false;
-
-    std::wstring date_text(static_cast<size_t>(date_length - 1), L'\0');
-    std::wstring time_text(static_cast<size_t>(time_length - 1), L'\0');
-    if (GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &local_time, nullptr, &date_text[0], date_length, nullptr) == 0)
-        return false;
-    if (GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &local_time, nullptr, &time_text[0], time_length) == 0)
-        return false;
-
-    text = date_text;
-    text += L" ";
-    text += time_text;
+    long long reset_at{};
+    if ((TryGetJsonInt64(metric_json, "resets_at", reset_at) || TryGetJsonInt64(metric_json, "reset_at", reset_at)) && reset_at > 0)
+    {
+        metric.has_reset_time = true;
+        metric.reset_at_unix_seconds = reset_at;
+        if (!helper_support::UnixSecondsToLocalText(reset_at, metric.reset_time_text))
+            metric.reset_time_text = std::to_wstring(reset_at);
+    }
     return true;
 }
 
-std::wstring FormatDurationFromSeconds(unsigned long long total_seconds)
+bool ClassifyWindow(long long minutes, bool& is_five_hour)
 {
-    if (total_seconds < 60ULL)
-        return L"<1m";
-
-    const unsigned long long total_minutes = total_seconds / 60ULL;
-    const unsigned long long days = total_minutes / (24ULL * 60ULL);
-    const unsigned long long hours = (total_minutes / 60ULL) % 24ULL;
-    const unsigned long long minutes = total_minutes % 60ULL;
-
-    std::wstring text;
-    if (days > 0)
+    if (llabs(minutes - FIVE_HOUR_WINDOW_MINUTES) <= WINDOW_TOLERANCE_MINUTES)
     {
-        text = std::to_wstring(days) + L"d";
-        if (hours > 0)
-            text += L" " + std::to_wstring(hours) + L"h";
-        return text;
+        is_five_hour = true;
+        return true;
     }
-
-    if (hours > 0)
+    if (llabs(minutes - SEVEN_DAY_WINDOW_MINUTES) <= WINDOW_TOLERANCE_MINUTES)
     {
-        text = std::to_wstring(hours) + L"h";
-        if (minutes > 0)
-            text += L" " + std::to_wstring(minutes) + L"m";
-        return text;
+        is_five_hour = false;
+        return true;
     }
-
-    return std::to_wstring(minutes) + L"m";
+    return false;
 }
 
-std::wstring FormatResetRemaining(long long reset_at_unix_seconds)
+// Classifies by window length regardless of primary/secondary position; unknown lengths are dropped.
+// Without window_minutes (legacy payloads) primary is 5h and secondary is 7d.
+void AssignWindows(const Metric* primary, const Metric* secondary, RateLimitRecord& record)
 {
-    FILETIME now_file_time{};
-    GetSystemTimeAsFileTime(&now_file_time);
-
-    ULARGE_INTEGER now_value{};
-    now_value.LowPart = now_file_time.dwLowDateTime;
-    now_value.HighPart = now_file_time.dwHighDateTime;
-    if (now_value.QuadPart < 116444736000000000ULL)
-        return std::wstring();
-
-    const long long now_unix_seconds = static_cast<long long>((now_value.QuadPart - 116444736000000000ULL) / 10000000ULL);
-    if (reset_at_unix_seconds <= now_unix_seconds)
-        return L"now";
-
-    return L"in " + FormatDurationFromSeconds(static_cast<unsigned long long>(reset_at_unix_seconds - now_unix_seconds));
+    const Metric* slots[] = { primary, secondary };
+    for (const Metric* metric : slots)
+    {
+        bool is_five_hour{};
+        if (metric == nullptr || !metric->has_window_minutes || !ClassifyWindow(metric->window_minutes, is_five_hour))
+            continue;
+        Metric& target = is_five_hour ? record.rolling_5h : record.rolling_7d;
+        if (!target.available)
+        {
+            target = *metric;
+            target.window_minutes = is_five_hour ? FIVE_HOUR_WINDOW_MINUTES : SEVEN_DAY_WINDOW_MINUTES;
+        }
+    }
+    if (primary != nullptr && !primary->has_window_minutes && !record.rolling_5h.available)
+        record.rolling_5h = *primary;
+    if (secondary != nullptr && !secondary->has_window_minutes && !record.rolling_7d.available)
+        record.rolling_7d = *secondary;
 }
+
+bool ComputeLimitReached(const RateLimitRecord& record, bool reported)
+{
+    return reported ||
+        !record.reached_type.empty() ||
+        (record.rolling_5h.available && record.rolling_5h.percentage >= 100.0) ||
+        (record.rolling_7d.available && record.rolling_7d.percentage >= 100.0);
+}
+
+std::wstring DescribeSource(const std::string& source, const std::string& method)
+{
+    if (source == "server")
+        return method == "wham" ? L"server (wham/usage)" : L"server (app-server)";
+    if (source == "jsonl")
+        return L"session JSONL via helper";
+    return helper_support::Utf8ToWide(source);
+}
+
+bool ParseHelperSnapshot(const std::string& json, RateLimitRecord& record)
+{
+    record = RateLimitRecord{};
+    std::string limit_id;
+    if (TryGetJsonString(json, "limit_id", limit_id) && limit_id != CODEX_LIMIT_ID)
+        return false;
+    if (!TryGetJsonInt64(json, "data_at_unix", record.data_at_unix) || record.data_at_unix <= 0)
+        return false;
+
+    std::string window_json;
+    Metric five_hour;
+    if (TryGetJsonObject(json, "five_hour", window_json) && LoadMetricObject(window_json, five_hour))
+    {
+        five_hour.has_window_minutes = true;
+        five_hour.window_minutes = FIVE_HOUR_WINDOW_MINUTES;
+        record.rolling_5h = five_hour;
+    }
+    Metric seven_day;
+    if (TryGetJsonObject(json, "seven_day", window_json) && LoadMetricObject(window_json, seven_day))
+    {
+        seven_day.has_window_minutes = true;
+        seven_day.window_minutes = SEVEN_DAY_WINDOW_MINUTES;
+        record.rolling_7d = seven_day;
+    }
+
+    std::string source;
+    std::string method;
+    std::string text;
+    TryGetJsonString(json, "source", source);
+    TryGetJsonString(json, "method", method);
+    record.source = DescribeSource(source, method);
+    if (TryGetJsonString(json, "plan_type", text))
+        record.plan_type = helper_support::Utf8ToWide(text);
+    if (TryGetJsonString(json, "rate_limit_reached_type", text))
+        record.reached_type = helper_support::Utf8ToWide(text);
+    bool reported_reached = false;
+    TryGetJsonBool(json, "limit_reached", reported_reached);
+    record.limit_reached = ComputeLimitReached(record, reported_reached);
+    record.valid = true;
+    return true;
+}
+
+bool IsCodexRateLimitEventLine(const std::string& line)
+{
+    return
+        line.find("\"event_msg\"") != std::string::npos &&
+        line.find("\"token_count\"") != std::string::npos &&
+        line.find("\"rate_limits\"") != std::string::npos;
+}
+
+// Newest-event candidate from one session JSONL line: only the "codex" bucket with a real window.
+bool ParseRateLimitEventLine(const std::string& line, RateLimitRecord& record)
+{
+    if (!IsCodexRateLimitEventLine(line))
+        return false;
+
+    std::string rate_limits;
+    if (!TryGetJsonObject(line, "rate_limits", rate_limits))
+        return false;
+    std::string limit_id;
+    if (TryGetJsonString(rate_limits, "limit_id", limit_id) && limit_id != CODEX_LIMIT_ID)
+        return false;
+
+    record = RateLimitRecord{};
+    std::string window_json;
+    Metric primary;
+    Metric secondary;
+    const bool has_primary = TryGetJsonObject(rate_limits, "primary", window_json) && LoadMetricObject(window_json, primary);
+    const bool has_secondary = TryGetJsonObject(rate_limits, "secondary", window_json) && LoadMetricObject(window_json, secondary);
+    AssignWindows(has_primary ? &primary : nullptr, has_secondary ? &secondary : nullptr, record);
+    if (!record.rolling_5h.available && !record.rolling_7d.available)
+        return false;
+
+    std::string timestamp;
+    if (!TryGetJsonString(line, "timestamp", timestamp) || !TryParseIso8601UtcSeconds(timestamp, record.data_at_unix))
+        return false;
+
+    std::string text;
+    if (TryGetJsonString(rate_limits, "plan_type", text))
+        record.plan_type = helper_support::Utf8ToWide(text);
+    if (TryGetJsonString(rate_limits, "rate_limit_reached_type", text))
+        record.reached_type = helper_support::Utf8ToWide(text);
+    record.limit_reached = ComputeLimitReached(record, false);
+    record.source = L"session JSONL";
+    record.valid = true;
+    return true;
+}
+
+// --- session JSONL files ------------------------------------------------------
+
+std::wstring NormalizePossibleWslPath(const std::wstring& path)
+{
+    if (path.size() >= 7 && path.compare(0, 5, L"/mnt/") == 0 && iswalpha(path[5]) && path[6] == L'/')
+    {
+        std::wstring converted(1, static_cast<wchar_t>(towupper(path[5])));
+        converted += L":";
+        converted += path.substr(6);
+        std::replace(converted.begin(), converted.end(), L'/', L'\\');
+        return converted;
+    }
+    return path;
+}
+
+std::wstring ExpandEnvironmentVariablesText(const std::wstring& text)
+{
+    if (text.find(L'%') == std::wstring::npos)
+        return text;
+    const DWORD required_size = ExpandEnvironmentStringsW(text.c_str(), nullptr, 0);
+    if (required_size <= 1)
+        return text;
+    std::wstring expanded(required_size, L'\0');
+    if (ExpandEnvironmentStringsW(text.c_str(), &expanded[0], required_size) == 0)
+        return text;
+    if (!expanded.empty() && expanded.back() == L'\0')
+        expanded.pop_back();
+    return expanded;
+}
+
+std::wstring GetCodexSessionsDir()
+{
+    std::wstring config_dir = NormalizePossibleWslPath(ExpandEnvironmentVariablesText(helper_support::TrimString(helper_support::GetEnvVar(L"CODEX_HOME"))));
+    if (config_dir.empty())
+    {
+        const std::wstring home = helper_support::TrimString(helper_support::GetEnvVar(L"USERPROFILE"));
+        if (home.empty())
+            return std::wstring();
+        config_dir = helper_support::JoinPath(home, L".codex");
+    }
+    return helper_support::JoinPath(config_dir, L"sessions");
+}
+
+struct SessionFileCandidate
+{
+    std::wstring path;
+    unsigned long long write_time{};
+    unsigned long long size{};
+};
+
+void CollectJsonlFilesRecursive(const std::wstring& root_dir, std::vector<SessionFileCandidate>& candidates)
+{
+    WIN32_FIND_DATAW find_data{};
+    HANDLE handle = FindFirstFileW(helper_support::JoinPath(root_dir, L"*").c_str(), &find_data);
+    if (handle == INVALID_HANDLE_VALUE)
+        return;
+
+    do
+    {
+        const wchar_t* name = find_data.cFileName;
+        if (wcscmp(name, L".") == 0 || wcscmp(name, L"..") == 0)
+            continue;
+        const std::wstring child_path = helper_support::JoinPath(root_dir, name);
+        if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        {
+            CollectJsonlFilesRecursive(child_path, candidates);
+            continue;
+        }
+        const size_t length = wcslen(name);
+        if (length < 6 || _wcsicmp(name + length - 6, L".jsonl") != 0)
+            continue;
+
+        SessionFileCandidate candidate;
+        candidate.path = child_path;
+        candidate.write_time = (static_cast<unsigned long long>(find_data.ftLastWriteTime.dwHighDateTime) << 32) | find_data.ftLastWriteTime.dwLowDateTime;
+        candidate.size = (static_cast<unsigned long long>(find_data.nFileSizeHigh) << 32) | find_data.nFileSizeLow;
+        candidates.push_back(candidate);
+    }
+    while (FindNextFileW(handle, &find_data));
+    FindClose(handle);
+}
+
+class SharedReadFile
+{
+public:
+    explicit SharedReadFile(const std::wstring& path)
+        : m_handle(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr))
+    {
+    }
+    ~SharedReadFile()
+    {
+        if (m_handle != INVALID_HANDLE_VALUE)
+            CloseHandle(m_handle);
+    }
+    SharedReadFile(const SharedReadFile&) = delete;
+    SharedReadFile& operator=(const SharedReadFile&) = delete;
+
+    bool IsOpen() const { return m_handle != INVALID_HANDLE_VALUE; }
+
+    bool ReadAt(unsigned long long offset, std::string& buffer, size_t length)
+    {
+        buffer.resize(length);
+        size_t total{};
+        while (total < length)
+        {
+            OVERLAPPED overlapped{};
+            const unsigned long long position = offset + total;
+            overlapped.Offset = static_cast<DWORD>(position & 0xFFFFFFFFULL);
+            overlapped.OffsetHigh = static_cast<DWORD>(position >> 32);
+            DWORD read_now{};
+            if (!ReadFile(m_handle, &buffer[total], static_cast<DWORD>(length - total), &read_now, &overlapped) || read_now == 0)
+                break;
+            total += read_now;
+        }
+        buffer.resize(total);
+        return total == length;
+    }
+
+private:
+    HANDLE m_handle;
+};
+
+// Walks complete lines from the end of the file (newest first) and keeps the first valid event.
+// parsed_size ends right after the last complete line so later refreshes read only appended bytes.
+void ScanFileTail(const std::wstring& path, unsigned long long size, bool& has_event, RateLimitRecord& event, unsigned long long& parsed_size)
+{
+    has_event = false;
+    event = RateLimitRecord{};
+    parsed_size = 0;
+    SharedReadFile file(path);
+    if (!file.IsOpen())
+        return;
+
+    unsigned long long end = size;
+    unsigned long long scanned = 0;
+    bool seen_last_newline = false;
+    std::string carry;
+    std::string chunk;
+    while (end > 0 && scanned < JSONL_TAIL_MAX_BYTES)
+    {
+        const unsigned long long start = end > JSONL_CHUNK_BYTES ? end - JSONL_CHUNK_BYTES : 0;
+        if (!file.ReadAt(start, chunk, static_cast<size_t>(end - start)))
+            return;
+        scanned += end - start;
+        std::string data = chunk + carry;
+
+        size_t line_end = data.size();
+        if (!seen_last_newline)
+        {
+            const size_t last_newline = data.rfind('\n');
+            if (last_newline == std::string::npos)
+            {
+                carry.swap(data);
+                end = start;
+                continue;
+            }
+            seen_last_newline = true;
+            parsed_size = start + last_newline + 1;
+            line_end = last_newline;
+        }
+
+        while (line_end > 0)
+        {
+            const size_t newline = data.rfind('\n', line_end - 1);
+            if (newline == std::string::npos)
+                break;
+            RateLimitRecord candidate;
+            if (ParseRateLimitEventLine(data.substr(newline + 1, line_end - newline - 1), candidate))
+            {
+                has_event = true;
+                event = candidate;
+                return;
+            }
+            line_end = newline;
+        }
+
+        carry = data.substr(0, line_end);
+        end = start;
+        if (start == 0 && !carry.empty())
+        {
+            RateLimitRecord candidate;
+            if (ParseRateLimitEventLine(carry, candidate))
+            {
+                has_event = true;
+                event = candidate;
+            }
+            return;
+        }
+    }
+}
+
+// Parses bytes appended since the last refresh.
+void ScanAppendedBytes(const std::wstring& path, unsigned long long from, unsigned long long to, bool& has_event, RateLimitRecord& event, unsigned long long& parsed_size)
+{
+    if (to - from > JSONL_TAIL_MAX_BYTES)
+    {
+        ScanFileTail(path, to, has_event, event, parsed_size);
+        return;
+    }
+    SharedReadFile file(path);
+    std::string data;
+    if (!file.IsOpen() || !file.ReadAt(from, data, static_cast<size_t>(to - from)))
+        return;
+    const size_t last_newline = data.rfind('\n');
+    if (last_newline == std::string::npos)
+        return;
+
+    size_t line_start = 0;
+    while (line_start <= last_newline)
+    {
+        const size_t newline = data.find('\n', line_start);
+        RateLimitRecord candidate;
+        if (ParseRateLimitEventLine(data.substr(line_start, newline - line_start), candidate) &&
+            (!has_event || candidate.data_at_unix >= event.data_at_unix))
+        {
+            has_event = true;
+            event = candidate;
+        }
+        line_start = newline + 1;
+    }
+    parsed_size = from + last_newline + 1;
+}
+
+// --- presentation -------------------------------------------------------------
 
 std::wstring FormatPercentage(double value)
 {
@@ -469,349 +611,83 @@ std::wstring FormatPercentage(double value)
     return buffer;
 }
 
-std::wstring BuildMetricTooltip(const wchar_t* label, const CCodexUsageData::Metric& metric)
+std::wstring BuildMetricTooltip(const wchar_t* label, const Metric& metric, long long now_unix)
 {
     std::wstring text(label);
     text += L": ";
     if (!metric.available)
-    {
-        text += L"unavailable";
-        return text;
-    }
+        return text + L"unavailable";
 
     text += FormatPercentage(metric.percentage);
-    const std::wstring reset_remaining = (metric.has_reset_time ? FormatResetRemaining(metric.reset_at_unix_seconds) : std::wstring());
-    if (!reset_remaining.empty() && !metric.reset_time_text.empty())
-    {
-        text += L" (resets ";
-        text += reset_remaining;
-        text += L" at ";
-        text += metric.reset_time_text;
-        text += L")";
-    }
-    else if (!reset_remaining.empty())
-    {
-        text += L" (resets ";
-        text += reset_remaining;
-        text += L")";
-    }
-    else if (!metric.reset_time_text.empty())
-    {
-        text += L" (resets at ";
-        text += metric.reset_time_text;
-        text += L")";
-    }
-    return text;
+    if (!metric.has_reset_time)
+        return text;
+    if (metric.reset_at_unix_seconds <= now_unix)
+        return text + L" (reset time passed at " + metric.reset_time_text + L"; waiting for new data)";
+    return text + L" (resets in " +
+        helper_support::FormatDurationFromSeconds(static_cast<unsigned long long>(metric.reset_at_unix_seconds - now_unix)) +
+        L" at " + metric.reset_time_text + L")";
 }
 
-unsigned long long GetRefreshIntervalMs(bool last_refresh_succeeded)
+std::wstring BuildHelperNote(bool helper_fresh)
 {
-    return (last_refresh_succeeded ? REFRESH_INTERVAL_MS : RETRY_INTERVAL_MS);
-}
-
-bool LoadMetricFromRateLimitsSection(const std::string& section_json, const char* key, CCodexUsageData::Metric& metric)
-{
-    std::string metric_json;
-    if (!TryGetJsonObject(section_json, key, metric_json))
-        return false;
-
-    double used_percent{};
-    double remaining_percent{};
-    if (TryGetJsonDouble(metric_json, "used_percent", used_percent))
-        metric.percentage = used_percent;
-    else if (TryGetJsonDouble(metric_json, "remaining_percent", remaining_percent))
-        metric.percentage = 100.0 - remaining_percent;
-    else
-        return false;
-
-    metric.available = true;
-
-    long long window_minutes{};
-    if (TryGetJsonInt64(metric_json, "window_minutes", window_minutes) && window_minutes > 0)
+    std::string status_json;
+    std::string state;
+    std::string retry_after;
+    if (helper_support::ReadFileShared(helper_support::GetPluginCachePath(STATUS_FILE_NAME), MAX_SMALL_FILE_SIZE, status_json))
     {
-        metric.has_window_minutes = true;
-        metric.window_minutes = window_minutes;
+        TryGetJsonString(status_json, "state", state);
+        std::string server_json;
+        if (TryGetJsonObject(status_json, "server", server_json))
+            TryGetJsonString(server_json, "retry_after_until", retry_after);
     }
 
-    long long reset_at{};
-    if (TryGetJsonInt64(metric_json, "reset_at", reset_at) || TryGetJsonInt64(metric_json, "resets_at", reset_at))
+    const bool running = helper_support::IsWatchLockProcessRunning(helper_support::GetPluginCachePath(WATCH_LOCK_FILE_NAME));
+    std::wstring note;
+    if (state == "rate_limited")
     {
-        metric.has_reset_time = true;
-        metric.reset_at_unix_seconds = reset_at;
-        std::wstring reset_text;
-        if (UnixSecondsToLocalText(reset_at, reset_text))
-            metric.reset_time_text = reset_text;
-        else
-            metric.reset_time_text = std::to_wstring(reset_at);
+        note = L"Codex usage helper: server rate limited";
+        long long retry_unix{};
+        std::wstring retry_text;
+        if (!retry_after.empty() && TryParseIso8601UtcSeconds(retry_after, retry_unix) && helper_support::UnixSecondsToLocalText(retry_unix, retry_text))
+            note += L", retry after " + retry_text;
     }
+    else if (state == "auth_required")
+        note = L"Codex usage helper: sign in to Codex again";
+    else if (state == "request_failed")
+        note = L"Codex usage helper: server request failed";
+    else if (state == "node_missing")
+        note = L"Codex usage helper: Node.js 22+ not found (see helper-config.json)";
+    else if (state == "crashed")
+        note = L"Codex usage helper crashed";
+    else if (!state.empty() && state != "ok")
+        note = L"Codex usage helper: " + helper_support::Utf8ToWide(state);
 
-    return true;
+    if (!running && !helper_fresh)
+        note += note.empty() ? L"Codex usage helper is not running" : L" (helper not running)";
+    return note;
 }
-
-bool AssignMetricToWindow(
-    const CCodexUsageData::Metric& metric,
-    CodexUsageWindow legacy_window,
-    CCodexUsageData::Snapshot& snapshot)
-{
-    CodexUsageWindow window = legacy_window;
-    if (metric.has_window_minutes)
-    {
-        if (metric.window_minutes == FIVE_HOUR_WINDOW_MINUTES)
-            window = CodexUsageWindow::Rolling5Hours;
-        else if (metric.window_minutes == SEVEN_DAY_WINDOW_MINUTES)
-            window = CodexUsageWindow::Rolling7Days;
-        else
-            return false;
-    }
-
-    if (window == CodexUsageWindow::Rolling5Hours)
-        snapshot.rolling_5h = metric;
-    else
-        snapshot.rolling_7d = metric;
-    return true;
-}
-
-bool LoadFromRateLimitsJson(const std::string& json, CCodexUsageData::Snapshot& snapshot)
-{
-    std::string rate_limits_json;
-    if (!TryGetJsonObject(json, "rate_limits", rate_limits_json))
-        return false;
-
-    CCodexUsageData::Metric primary;
-    CCodexUsageData::Metric secondary;
-    const bool has_primary = LoadMetricFromRateLimitsSection(rate_limits_json, "primary", primary);
-    const bool has_secondary = LoadMetricFromRateLimitsSection(rate_limits_json, "secondary", secondary);
-
-    bool assigned = false;
-    if (has_primary)
-        assigned = AssignMetricToWindow(primary, CodexUsageWindow::Rolling5Hours, snapshot) || assigned;
-    if (has_secondary)
-        assigned = AssignMetricToWindow(secondary, CodexUsageWindow::Rolling7Days, snapshot) || assigned;
-    return assigned;
-}
-
-std::wstring GetCodexSessionsDir()
-{
-    const std::wstring config_dir = GetCodexConfigDir();
-    if (config_dir.empty())
-        return std::wstring();
-    return JoinPath(config_dir, CODEX_SESSION_DIR_NAME);
-}
-
-void CollectJsonlFilesRecursive(const std::wstring& root_dir, std::vector<SessionFileCandidate>& candidates)
-{
-    if (!DirectoryExists(root_dir))
-        return;
-
-    const std::wstring search_path = JoinPath(root_dir, L"*");
-    WIN32_FIND_DATAW find_data{};
-    HANDLE handle = FindFirstFileW(search_path.c_str(), &find_data);
-    if (handle == INVALID_HANDLE_VALUE)
-        return;
-
-    do
-    {
-        const wchar_t* name = find_data.cFileName;
-        if (wcscmp(name, L".") == 0 || wcscmp(name, L"..") == 0)
-            continue;
-
-        const std::wstring child_path = JoinPath(root_dir, name);
-        if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
-        {
-            CollectJsonlFilesRecursive(child_path, candidates);
-            continue;
-        }
-
-        if (!EndsWithIgnoreCase(child_path, L".jsonl"))
-            continue;
-
-        candidates.push_back(SessionFileCandidate{ child_path, find_data.ftLastWriteTime });
-    }
-    while (FindNextFileW(handle, &find_data));
-
-    FindClose(handle);
-}
-
-bool CompareFileTimeNewer(const FILETIME& left, const FILETIME& right)
-{
-    return CompareFileTime(&left, &right) > 0;
-}
-
-bool IsFileTimeWithinSeconds(const FILETIME& newer, const FILETIME& older, long long seconds)
-{
-    ULARGE_INTEGER newer_value{};
-    newer_value.LowPart = newer.dwLowDateTime;
-    newer_value.HighPart = newer.dwHighDateTime;
-
-    ULARGE_INTEGER older_value{};
-    older_value.LowPart = older.dwLowDateTime;
-    older_value.HighPart = older.dwHighDateTime;
-
-    if (older_value.QuadPart >= newer_value.QuadPart)
-        return true;
-
-    const unsigned long long difference = newer_value.QuadPart - older_value.QuadPart;
-    return difference <= static_cast<unsigned long long>(seconds) * 10000000ULL;
-}
-
-bool IsCodexRateLimitEventLine(const std::string& line)
-{
-    return
-        line.find("\"type\":\"event_msg\"") != std::string::npos &&
-        line.find("\"payload\":{\"type\":\"token_count\"") != std::string::npos &&
-        line.find("\"rate_limits\"") != std::string::npos;
-}
-
-bool IsTimestampNewer(const std::string& left, const std::string& right)
-{
-    if (left.empty())
-        return false;
-    if (right.empty())
-        return true;
-    return left > right;
-}
-
-bool IsMetricBetterForSelection(const CCodexUsageData::Metric& metric, const std::string& event_timestamp, const MetricSelection& current)
-{
-    if (!metric.available)
-        return false;
-
-    if (!current.found)
-        return true;
-
-    if (metric.has_reset_time && current.metric.has_reset_time)
-    {
-        if (metric.reset_at_unix_seconds != current.metric.reset_at_unix_seconds)
-            return metric.reset_at_unix_seconds > current.metric.reset_at_unix_seconds;
-    }
-    else if (metric.has_reset_time != current.metric.has_reset_time)
-    {
-        return metric.has_reset_time;
-    }
-
-    return IsTimestampNewer(event_timestamp, current.event_timestamp);
-}
-
-void ConsiderMetricForSelection(const CCodexUsageData::Metric& metric, const std::string& event_timestamp, MetricSelection& selection)
-{
-    if (!IsMetricBetterForSelection(metric, event_timestamp, selection))
-        return;
-
-    selection.found = true;
-    selection.metric = metric;
-    selection.event_timestamp = event_timestamp;
-}
-
-void SelectMetricsFromCandidates(
-    const std::vector<SessionSnapshotCandidate>& candidates,
-    bool recent_only,
-    long long newest_event_unix_seconds,
-    MetricSelection& five_hour,
-    MetricSelection& seven_day)
-{
-    for (const SessionSnapshotCandidate& candidate : candidates)
-    {
-        if (recent_only)
-        {
-            if (!candidate.has_event_unix_seconds)
-                continue;
-            if (newest_event_unix_seconds - candidate.event_unix_seconds > RECENT_EVENT_WINDOW_SECONDS)
-                continue;
-        }
-
-        ConsiderMetricForSelection(candidate.snapshot.rolling_5h, candidate.event_timestamp, five_hour);
-        ConsiderMetricForSelection(candidate.snapshot.rolling_7d, candidate.event_timestamp, seven_day);
-    }
-}
-
-void SelectMissingMetricsFromCandidates(
-    const std::vector<SessionSnapshotCandidate>& candidates,
-    MetricSelection& five_hour,
-    MetricSelection& seven_day)
-{
-    MetricSelection fallback_five_hour;
-    MetricSelection fallback_seven_day;
-    for (const SessionSnapshotCandidate& candidate : candidates)
-    {
-        ConsiderMetricForSelection(candidate.snapshot.rolling_5h, candidate.event_timestamp, fallback_five_hour);
-        ConsiderMetricForSelection(candidate.snapshot.rolling_7d, candidate.event_timestamp, fallback_seven_day);
-    }
-
-    if (!five_hour.found && fallback_five_hour.found)
-        five_hour = fallback_five_hour;
-    if (!seven_day.found && fallback_seven_day.found)
-        seven_day = fallback_seven_day;
-}
-
-bool LoadSessionJsonlFile(const std::wstring& file_path, const FILETIME& last_write_time, SessionSnapshotCandidate& result)
-{
-    unsigned long long file_size{};
-    if (!GetFileSizeBytes(file_path, file_size) || file_size > MAX_TEXT_FILE_SIZE)
-        return false;
-
-    FILE* file{};
-    file = _wfsopen(file_path.c_str(), L"rb", _SH_DENYNO);
-    if (file == nullptr)
-        return false;
-
-    bool found = false;
-    CCodexUsageData::Snapshot current;
-    std::string latest_event_timestamp;
-    bool latest_has_event_unix_seconds = false;
-    long long latest_event_unix_seconds = 0;
-    std::string line;
-    while (ReadUtf8Line(file, line))
-    {
-        if (!IsCodexRateLimitEventLine(line))
-            continue;
-
-        CCodexUsageData::Snapshot candidate;
-        if (LoadFromRateLimitsJson(line, candidate))
-        {
-            std::string candidate_timestamp;
-            const bool has_timestamp = TryGetJsonString(line, "timestamp", candidate_timestamp);
-            long long candidate_event_unix_seconds{};
-            const bool has_event_unix_seconds =
-                has_timestamp && TryParseIso8601UtcSeconds(candidate_timestamp, candidate_event_unix_seconds);
-            const bool take_candidate =
-                !found ||
-                (has_timestamp && IsTimestampNewer(candidate_timestamp, latest_event_timestamp)) ||
-                (!has_timestamp && latest_event_timestamp.empty());
-
-            if (take_candidate)
-            {
-                current = candidate;
-                if (has_timestamp)
-                    latest_event_timestamp = candidate_timestamp;
-                latest_has_event_unix_seconds = has_event_unix_seconds;
-                latest_event_unix_seconds = candidate_event_unix_seconds;
-                found = true;
-            }
-        }
-    }
-
-    fclose(file);
-
-    if (!found)
-        return false;
-
-    result.snapshot.rolling_5h = current.rolling_5h;
-    result.snapshot.rolling_7d = current.rolling_7d;
-    result.snapshot.source_text = L"sessions JSONL";
-    result.event_timestamp = latest_event_timestamp;
-    result.has_event_unix_seconds = latest_has_event_unix_seconds;
-    result.event_unix_seconds = latest_event_unix_seconds;
-    result.file_last_write_time = last_write_time;
-    result.file_path = file_path;
-    return true;
-}
-
 } // namespace
 
 CCodexUsageData& CCodexUsageData::Instance()
 {
     static CCodexUsageData instance;
     return instance;
+}
+
+void CCodexUsageData::AutoStartBundledHelperIfNeeded()
+{
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        if (m_helper_auto_start_attempted)
+            return;
+        m_helper_auto_start_attempted = true;
+    }
+
+    if (helper_support::IsWatchLockProcessRunning(helper_support::GetPluginCachePath(WATCH_LOCK_FILE_NAME)))
+        return;
+    const std::wstring script_path = helper_support::FindBundledScript(HELPER_SCRIPT_NAME);
+    if (!script_path.empty())
+        helper_support::LaunchBundledScript(script_path, L"start");
 }
 
 void CCodexUsageData::RefreshIfNeeded()
@@ -821,28 +697,184 @@ void CCodexUsageData::RefreshIfNeeded()
         std::lock_guard<std::mutex> lock(m_state_mutex);
         if (m_refresh_in_progress)
             return;
-
-        const unsigned long long refresh_interval_ms = GetRefreshIntervalMs(m_last_refresh_succeeded);
-        if (m_last_refresh_tick != 0 && now - m_last_refresh_tick < refresh_interval_ms)
+        if (m_last_check_tick != 0 && now - m_last_check_tick < CHECK_INTERVAL_MS)
             return;
-
+        m_last_check_tick = now;
         m_refresh_in_progress = true;
     }
 
-    const bool succeeded = Refresh();
+    Refresh(now);
 
+    std::lock_guard<std::mutex> lock(m_state_mutex);
+    m_refresh_in_progress = false;
+}
+
+void CCodexUsageData::Refresh(unsigned long long now_tick)
+{
+    const bool helper_changed = ReloadHelperSnapshotIfChanged();
+    const long long now_unix = helper_support::GetUnixNowSeconds();
+    const bool helper_fresh = m_helper_record.valid && now_unix - m_helper_record.data_at_unix <= STALE_AFTER_SECONDS;
+
+    bool scanned = false;
+    if (!helper_fresh && (m_last_jsonl_tick == 0 || now_tick - m_last_jsonl_tick >= JSONL_REFRESH_INTERVAL_MS))
     {
-        std::lock_guard<std::mutex> lock(m_state_mutex);
-        m_last_refresh_tick = now;
-        m_last_refresh_succeeded = succeeded;
-        m_refresh_in_progress = false;
+        ScanSessionJsonl();
+        m_last_jsonl_tick = now_tick;
+        scanned = true;
     }
+
+    if (!helper_changed && !scanned && m_last_build_tick != 0 && now_tick - m_last_build_tick < REBUILD_INTERVAL_MS)
+        return;
+    m_last_build_tick = now_tick;
+
+    const RateLimitRecord* best = m_helper_record.valid ? &m_helper_record : nullptr;
+    if (!helper_fresh && m_jsonl_record.valid && (best == nullptr || m_jsonl_record.data_at_unix > best->data_at_unix))
+        best = &m_jsonl_record;
+
+    std::wstring error_text = m_jsonl_error;
+    if (error_text.empty())
+        error_text = L"Codex usage data unavailable";
+    const Snapshot snapshot = BuildSnapshot(best, error_text, BuildHelperNote(helper_fresh));
+
+    std::lock_guard<std::mutex> lock(m_state_mutex);
+    m_snapshot = snapshot;
+}
+
+bool CCodexUsageData::ReloadHelperSnapshotIfChanged()
+{
+    const std::wstring path = helper_support::GetPluginCachePath(SNAPSHOT_FILE_NAME);
+    unsigned long long write_time{};
+    if (!helper_support::GetFileWriteTime(path, write_time))
+    {
+        if (!m_helper_snapshot_exists)
+            return false;
+        m_helper_snapshot_exists = false;
+        m_helper_record = RateLimitRecord{};
+        return true;
+    }
+    if (m_helper_snapshot_exists && write_time == m_helper_snapshot_write_time)
+        return false;
+
+    std::string json;
+    if (!helper_support::ReadFileShared(path, MAX_SMALL_FILE_SIZE, json))
+        return false;  // likely being replaced; retry on the next check
+
+    RateLimitRecord record;
+    if (!ParseHelperSnapshot(json, record))
+        record = RateLimitRecord{};
+    m_helper_record = record;
+    m_helper_snapshot_exists = true;
+    m_helper_snapshot_write_time = write_time;
+    return true;
+}
+
+void CCodexUsageData::ScanSessionJsonl()
+{
+    const std::wstring sessions_dir = GetCodexSessionsDir();
+    if (sessions_dir.empty() || !helper_support::DirectoryExists(sessions_dir))
+    {
+        m_jsonl_record = RateLimitRecord{};
+        m_jsonl_error = L"Codex sessions JSONL not found";
+        m_session_files.clear();
+        return;
+    }
+
+    std::vector<SessionFileCandidate> candidates;
+    CollectJsonlFilesRecursive(sessions_dir, candidates);
+    std::sort(candidates.begin(), candidates.end(), [](const SessionFileCandidate& left, const SessionFileCandidate& right) {
+        return left.write_time > right.write_time;
+    });
+    if (candidates.size() > JSONL_SCAN_MAX_FILES)
+        candidates.resize(JSONL_SCAN_MAX_FILES);
+
+    std::map<std::wstring, SessionFileState> next_files;
+    RateLimitRecord best;
+    for (const SessionFileCandidate& candidate : candidates)
+    {
+        SessionFileState state;
+        const auto cached = m_session_files.find(candidate.path);
+        if (cached == m_session_files.end() || candidate.size < cached->second.parsed_size)
+        {
+            ScanFileTail(candidate.path, candidate.size, state.has_event, state.event, state.parsed_size);
+        }
+        else
+        {
+            state = cached->second;
+            if (candidate.size > state.parsed_size)
+                ScanAppendedBytes(candidate.path, state.parsed_size, candidate.size, state.has_event, state.event, state.parsed_size);
+        }
+
+        if (state.has_event && (!best.valid || state.event.data_at_unix > best.data_at_unix))
+            best = state.event;
+        next_files[candidate.path] = state;
+    }
+    m_session_files.swap(next_files);
+
+    m_jsonl_record = best;
+    m_jsonl_error = best.valid ? std::wstring() : L"Codex sessions JSONL has no codex rate limits yet";
+}
+
+CCodexUsageData::Snapshot CCodexUsageData::BuildSnapshot(const RateLimitRecord* record, const std::wstring& error_text, const std::wstring& helper_note) const
+{
+    Snapshot snapshot;
+    const long long now_unix = helper_support::GetUnixNowSeconds();
+    const bool has_record = record != nullptr && record->valid;
+    const bool data_stale = has_record && now_unix - record->data_at_unix > STALE_AFTER_SECONDS;
+    if (has_record)
+    {
+        snapshot.rolling_5h = record->rolling_5h;
+        snapshot.rolling_7d = record->rolling_7d;
+        Metric* metrics[] = { &snapshot.rolling_5h, &snapshot.rolling_7d };
+        for (Metric* metric : metrics)
+        {
+            metric->stale = metric->available &&
+                (data_stale || (metric->has_reset_time && metric->reset_at_unix_seconds <= now_unix));
+        }
+    }
+
+    snapshot.value_5h_text = snapshot.rolling_5h.available ? FormatPercentage(snapshot.rolling_5h.percentage) : L"--";
+    snapshot.value_7d_text = snapshot.rolling_7d.available ? FormatPercentage(snapshot.rolling_7d.percentage) : L"--";
+
+    std::wstring updated_line;
+    if (has_record)
+    {
+        updated_line = L"Updated " + helper_support::FormatAgeText(now_unix - record->data_at_unix) + L", " + record->source;
+        if (!record->plan_type.empty())
+            updated_line += L", plan " + record->plan_type;
+        if (data_stale)
+            updated_line += L" (stale)";
+    }
+
+    if (!snapshot.rolling_5h.available && !snapshot.rolling_7d.available)
+    {
+        snapshot.tooltip_text = L"Codex usage limits unavailable";
+        if (has_record)
+            snapshot.tooltip_text += L"\nNo 5h/7d window reported. " + updated_line;
+        else if (!error_text.empty())
+            snapshot.tooltip_text += L"\n" + error_text;
+    }
+    else
+    {
+        snapshot.tooltip_text = L"Codex usage limits";
+        snapshot.tooltip_text += L"\n" + BuildMetricTooltip(L"5h", snapshot.rolling_5h, now_unix);
+        snapshot.tooltip_text += L"\n" + BuildMetricTooltip(L"7d", snapshot.rolling_7d, now_unix);
+        if (record->limit_reached)
+        {
+            snapshot.tooltip_text += L"\nLimit reached";
+            if (!record->reached_type.empty())
+                snapshot.tooltip_text += L" (" + record->reached_type + L")";
+        }
+        snapshot.tooltip_text += L"\n" + updated_line;
+    }
+
+    if (!helper_note.empty())
+        snapshot.tooltip_text += L"\n" + helper_note;
+    return snapshot;
 }
 
 const std::wstring& CCodexUsageData::GetValueText(CodexUsageWindow window) const
 {
     thread_local std::wstring value_text;
-
     std::lock_guard<std::mutex> lock(m_state_mutex);
     value_text = (window == CodexUsageWindow::Rolling5Hours ? m_snapshot.value_5h_text : m_snapshot.value_7d_text);
     return value_text;
@@ -851,7 +883,6 @@ const std::wstring& CCodexUsageData::GetValueText(CodexUsageWindow window) const
 const CCodexUsageData::Metric& CCodexUsageData::GetMetric(CodexUsageWindow window) const
 {
     thread_local Metric metric;
-
     std::lock_guard<std::mutex> lock(m_state_mutex);
     metric = (window == CodexUsageWindow::Rolling5Hours ? m_snapshot.rolling_5h : m_snapshot.rolling_7d);
     return metric;
@@ -860,156 +891,7 @@ const CCodexUsageData::Metric& CCodexUsageData::GetMetric(CodexUsageWindow windo
 const std::wstring& CCodexUsageData::GetTooltipText() const
 {
     thread_local std::wstring tooltip_text;
-
     std::lock_guard<std::mutex> lock(m_state_mutex);
     tooltip_text = m_snapshot.tooltip_text;
     return tooltip_text;
-}
-
-bool CCodexUsageData::Refresh()
-{
-    Snapshot snapshot;
-    const bool succeeded = LoadFromStore(snapshot);
-    FinalizeSnapshot(snapshot);
-
-    std::lock_guard<std::mutex> lock(m_state_mutex);
-    m_snapshot = snapshot;
-    return succeeded;
-}
-
-bool CCodexUsageData::LoadFromStore(Snapshot& snapshot)
-{
-    const std::wstring config_dir = GetCodexConfigDir();
-    if (config_dir.empty())
-    {
-        snapshot.error_text = L"Codex config directory not found";
-        return false;
-    }
-
-    const std::wstring sessions_dir = GetCodexSessionsDir();
-    const bool has_sessions_dir = DirectoryExists(sessions_dir);
-
-    if (has_sessions_dir)
-    {
-        Snapshot candidate;
-        if (LoadFromSessionJsonlStore(sessions_dir, candidate))
-        {
-            snapshot = candidate;
-            return true;
-        }
-        snapshot.error_text = candidate.error_text;
-    }
-    else
-    {
-        snapshot.error_text = L"Codex sessions JSONL not found";
-    }
-
-    if (snapshot.error_text.empty())
-        snapshot.error_text = L"Codex usage data unavailable";
-
-    return false;
-}
-
-bool CCodexUsageData::LoadFromSessionJsonlStore(const std::wstring& store_dir, Snapshot& snapshot)
-{
-    std::vector<SessionFileCandidate> candidates;
-    CollectJsonlFilesRecursive(store_dir, candidates);
-    if (candidates.empty())
-    {
-        snapshot.error_text = L"Codex sessions JSONL not found";
-        return false;
-    }
-
-    std::sort(candidates.begin(), candidates.end(), [](const SessionFileCandidate& left, const SessionFileCandidate& right) {
-        return CompareFileTimeNewer(left.last_write_time, right.last_write_time);
-    });
-
-    std::vector<SessionSnapshotCandidate> parsed_candidates;
-    bool has_newest_event_unix_seconds = false;
-    long long newest_event_unix_seconds = LLONG_MIN;
-    bool has_active_file_window = false;
-    FILETIME active_file_window{};
-    for (const SessionFileCandidate& candidate : candidates)
-    {
-        if (has_active_file_window &&
-            !IsFileTimeWithinSeconds(active_file_window, candidate.last_write_time, RECENT_EVENT_WINDOW_SECONDS))
-        {
-            break;
-        }
-
-        SessionSnapshotCandidate parsed;
-        if (!LoadSessionJsonlFile(candidate.path, candidate.last_write_time, parsed))
-            continue;
-
-        if (!has_active_file_window)
-        {
-            active_file_window = candidate.last_write_time;
-            has_active_file_window = true;
-        }
-
-        if (parsed.has_event_unix_seconds)
-        {
-            if (!has_newest_event_unix_seconds || parsed.event_unix_seconds > newest_event_unix_seconds)
-            {
-                newest_event_unix_seconds = parsed.event_unix_seconds;
-                has_newest_event_unix_seconds = true;
-            }
-        }
-
-        parsed_candidates.push_back(parsed);
-    }
-
-    if (!parsed_candidates.empty())
-    {
-        MetricSelection five_hour;
-        MetricSelection seven_day;
-
-        // Multiple active sessions can write conflicting rate-limit windows.
-        // Within recent events, prefer the newest reset window and use the event
-        // timestamp only as a tie-breaker so stale windows do not flicker back.
-        if (has_newest_event_unix_seconds)
-            SelectMetricsFromCandidates(parsed_candidates, true, newest_event_unix_seconds, five_hour, seven_day);
-
-        if (!five_hour.found || !seven_day.found)
-            SelectMissingMetricsFromCandidates(parsed_candidates, five_hour, seven_day);
-
-        if (five_hour.found)
-            snapshot.rolling_5h = five_hour.metric;
-        if (seven_day.found)
-            snapshot.rolling_7d = seven_day.metric;
-
-        snapshot.source_text = L"sessions JSONL";
-        return true;
-    }
-
-    snapshot.error_text = L"Codex sessions JSONL returned no rate limits";
-    return false;
-}
-
-void CCodexUsageData::FinalizeSnapshot(Snapshot& snapshot)
-{
-    snapshot.value_5h_text = (snapshot.rolling_5h.available ? FormatPercentage(snapshot.rolling_5h.percentage) : L"--");
-    snapshot.value_7d_text = (snapshot.rolling_7d.available ? FormatPercentage(snapshot.rolling_7d.percentage) : L"--");
-
-    if (!HasAvailableMetric(snapshot))
-    {
-        snapshot.tooltip_text = L"Codex usage limits unavailable";
-        if (!snapshot.error_text.empty())
-        {
-            snapshot.tooltip_text += L"\n";
-            snapshot.tooltip_text += snapshot.error_text;
-        }
-        return;
-    }
-
-    snapshot.tooltip_text = L"Codex usage limits";
-    snapshot.tooltip_text += L"\n";
-    snapshot.tooltip_text += BuildMetricTooltip(L"5h", snapshot.rolling_5h);
-    snapshot.tooltip_text += L"\n";
-    snapshot.tooltip_text += BuildMetricTooltip(L"7d", snapshot.rolling_7d);
-}
-
-bool CCodexUsageData::HasAvailableMetric(const Snapshot& snapshot)
-{
-    return snapshot.rolling_5h.available || snapshot.rolling_7d.available;
 }

@@ -479,12 +479,14 @@
     <ClInclude Include="CodexUsageData.h" />
     <ClInclude Include="ClaudeUsagePlugin.h" />
     <ClInclude Include="framework.h" />
+    <ClInclude Include="HelperSupport.h" />
     <ClInclude Include="pch.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ClaudeUsageData.cpp" />
     <ClCompile Include="CodexUsageData.cpp" />
     <ClCompile Include="ClaudeUsagePlugin.cpp" />
+    <ClCompile Include="HelperSupport.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug (lite)|Win32'">Create</PrecompiledHeader>
@@ -513,12 +515,28 @@
     <ClaudeHelperAsset Include="$(RepoRoot)helper\claude-web-helper\package-lock.json">
       <Destination>$(OutDir)ClaudeUsagePlugin\helper\claude-web-helper\package-lock.json</Destination>
     </ClaudeHelperAsset>
+    <ClaudeHelperAsset Include="$(RepoRoot)scripts\helper-common.ps1">
+      <Destination>$(OutDir)ClaudeUsagePlugin\helper-common.ps1</Destination>
+    </ClaudeHelperAsset>
+    <ClaudeHelperAsset Include="$(RepoRoot)scripts\codex-usage-helper.ps1">
+      <Destination>$(OutDir)ClaudeUsagePlugin\codex-usage-helper.ps1</Destination>
+    </ClaudeHelperAsset>
+    <ClaudeHelperAsset Include="$(RepoRoot)helper\codex-usage-helper\index.mjs">
+      <Destination>$(OutDir)ClaudeUsagePlugin\helper\codex-usage-helper\index.mjs</Destination>
+    </ClaudeHelperAsset>
+    <ClaudeHelperAsset Include="$(RepoRoot)helper\codex-usage-helper\lib.mjs">
+      <Destination>$(OutDir)ClaudeUsagePlugin\helper\codex-usage-helper\lib.mjs</Destination>
+    </ClaudeHelperAsset>
+    <ClaudeHelperAsset Include="$(RepoRoot)helper\codex-usage-helper\package.json">
+      <Destination>$(OutDir)ClaudeUsagePlugin\helper\codex-usage-helper\package.json</Destination>
+    </ClaudeHelperAsset>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="CopyClaudeHelperAssets" AfterTargets="Build">
     <Delete Files="$(OutDir)claude-web-helper.ps1" />
     <RemoveDir Directories="$(OutDir)helper" />
     <MakeDir Directories="$(OutDir)ClaudeUsagePlugin\helper\claude-web-helper" />
+    <MakeDir Directories="$(OutDir)ClaudeUsagePlugin\helper\codex-usage-helper" />
     <Copy SourceFiles="@(ClaudeHelperAsset)" DestinationFiles="@(ClaudeHelperAsset->'%(Destination)')" SkipUnchangedFiles="true" />
   </Target>
   <ImportGroup Label="ExtensionTargets">

@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "ClaudeUsageData.h"
+#include "HelperSupport.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cwctype>
@@ -11,7 +13,10 @@ namespace
 constexpr unsigned long long REFRESH_INTERVAL_MS = 30ULL * 1000ULL;
 constexpr unsigned long long RETRY_INTERVAL_MS = 30ULL * 1000ULL;
 constexpr unsigned long long BACKOFF_RECHECK_INTERVAL_MS = 5ULL * 1000ULL;
-constexpr unsigned long long HELPER_CACHE_MAX_AGE_MS = 90ULL * 1000ULL;
+// The helper refreshes every 5 minutes by default (configurable), so a snapshot stays usable for
+// 30 minutes and is marked stale once it is older than two refresh intervals.
+constexpr unsigned long long HELPER_CACHE_MAX_AGE_MS = 30ULL * 60ULL * 1000ULL;
+constexpr unsigned long long DEFAULT_HELPER_REFRESH_MS = 5ULL * 60ULL * 1000ULL;
 constexpr unsigned long long MAX_JSON_FILE_SIZE = 1024ULL * 1024ULL;
 constexpr wchar_t PLUGIN_CACHE_DIR_NAME[] = L"trafficmonitor-claude-usage-plugin";
 constexpr wchar_t HELPER_CACHE_FILE_NAME[] = L"claude-web-usage.json";
@@ -182,32 +187,6 @@ bool GetFileLastWriteTimeMs(const std::wstring& path, unsigned long long& last_w
     value.HighPart = attributes.ftLastWriteTime.dwHighDateTime;
     last_write_time_ms = value.QuadPart / 10000ULL;
     return true;
-}
-
-std::wstring GetCurrentModulePath()
-{
-    HMODULE module_handle{};
-    if (!GetModuleHandleExW(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&GetCurrentModulePath),
-        &module_handle))
-    {
-        return std::wstring();
-    }
-
-    std::wstring path(MAX_PATH, L'\0');
-    DWORD length = GetModuleFileNameW(module_handle, &path[0], static_cast<DWORD>(path.size()));
-    while (length >= path.size() - 1)
-    {
-        path.resize(path.size() * 2);
-        length = GetModuleFileNameW(module_handle, &path[0], static_cast<DWORD>(path.size()));
-    }
-
-    if (length == 0)
-        return std::wstring();
-
-    path.resize(length);
-    return path;
 }
 
 bool ReadUtf8File(const std::wstring& path, std::wstring& output)
@@ -404,128 +383,6 @@ bool TryGetJsonObject(const std::wstring& json, const wchar_t* key, std::wstring
         return false;
 
     value = json.substr(value_pos, end_pos - value_pos + 1);
-    return true;
-}
-
-bool TryGetJsonInt(const std::wstring& json, const wchar_t* key, DWORD& value)
-{
-    double double_value{};
-    if (!TryGetJsonDouble(json, key, double_value))
-        return false;
-
-    if (double_value <= 0)
-        return false;
-
-    value = static_cast<DWORD>(double_value);
-    return true;
-}
-
-bool IsProcessRunning(DWORD process_id)
-{
-    if (process_id == 0)
-        return false;
-
-    HANDLE process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
-    if (process_handle == nullptr)
-        return false;
-
-    DWORD exit_code{};
-    const BOOL succeeded = GetExitCodeProcess(process_handle, &exit_code);
-    CloseHandle(process_handle);
-    return succeeded && exit_code == STILL_ACTIVE;
-}
-
-bool IsHelperWatchRunning()
-{
-    const std::wstring watch_lock_path = GetHelperWatchLockPath();
-    if (watch_lock_path.empty() || !FileExists(watch_lock_path))
-        return false;
-
-    std::wstring watch_lock_json;
-    if (!ReadUtf8File(watch_lock_path, watch_lock_json))
-        return false;
-
-    DWORD process_id{};
-    if (!TryGetJsonInt(watch_lock_json, L"pid", process_id))
-        return false;
-
-    return IsProcessRunning(process_id);
-}
-
-std::wstring FindBundledHelperScriptPath()
-{
-    const std::wstring module_path = GetCurrentModulePath();
-    if (module_path.empty())
-        return std::wstring();
-
-    const std::wstring module_dir = GetDirectoryPath(module_path);
-    if (module_dir.empty())
-        return std::wstring();
-
-    const std::wstring bundled_subdir_script_path = JoinPath(module_dir, L"ClaudeUsagePlugin\\claude-web-helper.ps1");
-    if (FileExists(bundled_subdir_script_path))
-        return bundled_subdir_script_path;
-
-    const std::wstring bundled_root_script_path = JoinPath(module_dir, L"claude-web-helper.ps1");
-    if (FileExists(bundled_root_script_path))
-        return bundled_root_script_path;
-
-    const std::wstring build_script_path = JoinPath(module_dir, L"..\\..\\..\\scripts\\claude-web-helper.ps1");
-    if (FileExists(build_script_path))
-        return build_script_path;
-
-    const std::wstring x64_build_script_path = JoinPath(module_dir, L"..\\..\\..\\..\\scripts\\claude-web-helper.ps1");
-    if (FileExists(x64_build_script_path))
-        return x64_build_script_path;
-
-    return std::wstring();
-}
-
-bool LaunchBundledHelperStart(const std::wstring& script_path)
-{
-    if (script_path.empty() || !FileExists(script_path))
-        return false;
-
-    std::wstring powershell_path = JoinPath(TrimString(GetEnvVar(L"SystemRoot")), L"System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    if (powershell_path.empty() || !FileExists(powershell_path))
-        powershell_path = L"powershell.exe";
-
-    const std::wstring script_dir = GetDirectoryPath(script_path);
-    if (script_dir.empty() || !DirectoryExists(script_dir))
-        return false;
-
-    std::wstring command_line = L"\"";
-    command_line += powershell_path;
-    command_line += L"\" -NoProfile -ExecutionPolicy Bypass -File \"";
-    command_line += script_path;
-    command_line += L"\" start";
-
-    STARTUPINFOW startup_info{};
-    startup_info.cb = sizeof(startup_info);
-    startup_info.dwFlags = STARTF_USESHOWWINDOW;
-    startup_info.wShowWindow = SW_HIDE;
-
-    PROCESS_INFORMATION process_info{};
-    std::wstring mutable_command_line = command_line;
-    mutable_command_line.push_back(L'\0');
-
-    const BOOL created = CreateProcessW(
-        nullptr,
-        &mutable_command_line[0],
-        nullptr,
-        nullptr,
-        FALSE,
-        CREATE_NO_WINDOW,
-        nullptr,
-        script_dir.c_str(),
-        &startup_info,
-        &process_info);
-
-    if (!created)
-        return false;
-
-    CloseHandle(process_info.hThread);
-    CloseHandle(process_info.hProcess);
     return true;
 }
 
@@ -823,6 +680,13 @@ std::wstring BuildMetricTooltip(const wchar_t* label, const CClaudeUsageData::Me
     }
 
     text += FormatPercentage(metric.percentage);
+    if (metric.has_reset_time && metric.reset_at_unix_seconds <= helper_support::GetUnixNowSeconds())
+    {
+        text += L" (reset time passed at ";
+        text += metric.reset_time_text;
+        text += L"; waiting for new data)";
+        return text;
+    }
     const std::wstring reset_remaining = (metric.has_reset_time ? FormatResetRemaining(metric.reset_at_unix_seconds) : std::wstring());
     if (!reset_remaining.empty() && !metric.reset_time_text.empty())
     {
@@ -922,6 +786,12 @@ bool TryLoadHelperUsageSnapshot(CClaudeUsageData::Snapshot& snapshot, bool requi
     snapshot.rolling_5h = cached_snapshot.rolling_5h;
     snapshot.rolling_7d = cached_snapshot.rolling_7d;
     snapshot.source_text = L"Claude web helper";
+    snapshot.has_data_time = true;
+    snapshot.data_at_unix = static_cast<long long>(last_write_time_ms / 1000ULL) - 11644473600LL;
+    double refresh_ms{};
+    snapshot.refresh_ms = (TryGetJsonDouble(cached_json, L"refresh_ms", refresh_ms) && refresh_ms > 0)
+        ? static_cast<unsigned long long>(refresh_ms)
+        : DEFAULT_HELPER_REFRESH_MS;
     return true;
 }
 
@@ -940,6 +810,8 @@ std::wstring BuildHelperStatusSummary(const std::wstring& state, const std::wstr
         return L"Claude web helper signed in, but usage access was denied";
     if (state == L"rate_limited")
         return L"Claude web helper hit a rate limit";
+    if (state == L"node_missing")
+        return L"Claude web helper: Node.js 22+ not found (see helper-config.json)";
     if (state == L"profile_in_use")
         return L"Claude web helper browser profile is still in use";
     if (state == L"cloudflare_blocked")
@@ -1008,6 +880,9 @@ bool TryLoadHelperStatusSummary(std::wstring& summary)
     }
 
     summary = BuildHelperStatusSummary(state, error_text);
+    std::wstring retry_after_at;
+    if (state == L"rate_limited" && TryGetJsonString(status_json, L"retry_after_at", retry_after_at))
+        summary += L" (retry after " + FormatResetTime(retry_after_at) + L")";
     return !summary.empty();
 }
 
@@ -1021,20 +896,19 @@ CClaudeUsageData& CClaudeUsageData::Instance()
 
 void CClaudeUsageData::AutoStartBundledHelperIfNeeded()
 {
-    std::lock_guard<std::mutex> lock(m_state_mutex);
-    if (m_helper_auto_start_attempted)
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        if (m_helper_auto_start_attempted)
+            return;
+        m_helper_auto_start_attempted = true;
+    }
+
+    if (helper_support::IsWatchLockProcessRunning(GetHelperWatchLockPath()))
         return;
 
-    m_helper_auto_start_attempted = true;
-
-    if (IsHelperWatchRunning())
-        return;
-
-    const std::wstring script_path = FindBundledHelperScriptPath();
-    if (script_path.empty())
-        return;
-
-    LaunchBundledHelperStart(script_path);
+    const std::wstring script_path = helper_support::FindBundledScript(L"claude-web-helper.ps1");
+    if (!script_path.empty())
+        helper_support::LaunchBundledScript(script_path, L"start");
 }
 
 void CClaudeUsageData::RefreshIfNeeded()
@@ -1126,7 +1000,13 @@ bool CClaudeUsageData::LoadFromUsageApi(Snapshot& snapshot, unsigned long long& 
     (void)allow_api_request;
 
     if (TryLoadHelperUsageSnapshot(snapshot, true))
+    {
+        // Keep showing the snapshot but surface helper problems such as rate limits.
+        std::wstring summary;
+        if (TryLoadHelperStatusSummary(summary))
+            snapshot.error_text = summary;
         return true;
+    }
 
     if (!TryLoadHelperStatusSummary(snapshot.error_text))
         snapshot.error_text = L"Claude web helper snapshot unavailable";
@@ -1135,6 +1015,16 @@ bool CClaudeUsageData::LoadFromUsageApi(Snapshot& snapshot, unsigned long long& 
 
 void CClaudeUsageData::FinalizeSnapshot(Snapshot& snapshot)
 {
+    const long long now_unix = helper_support::GetUnixNowSeconds();
+    const long long stale_after_seconds = (std::max)(180LL, static_cast<long long>(snapshot.refresh_ms / 1000ULL) * 2LL + 60LL);
+    const bool data_stale = snapshot.has_data_time && now_unix - snapshot.data_at_unix > stale_after_seconds;
+    CClaudeUsageData::Metric* metrics[] = { &snapshot.rolling_5h, &snapshot.rolling_7d };
+    for (CClaudeUsageData::Metric* metric : metrics)
+    {
+        metric->stale = metric->available &&
+            (data_stale || (metric->has_reset_time && metric->reset_at_unix_seconds <= now_unix));
+    }
+
     snapshot.value_5h_text = (snapshot.rolling_5h.available ? FormatPercentage(snapshot.rolling_5h.percentage) : L"--");
     snapshot.value_7d_text = (snapshot.rolling_7d.available ? FormatPercentage(snapshot.rolling_7d.percentage) : L"--");
 
@@ -1154,6 +1044,12 @@ void CClaudeUsageData::FinalizeSnapshot(Snapshot& snapshot)
     snapshot.tooltip_text += BuildMetricTooltip(L"5h", snapshot.rolling_5h);
     snapshot.tooltip_text += L"\n";
     snapshot.tooltip_text += BuildMetricTooltip(L"7d", snapshot.rolling_7d);
+    if (snapshot.has_data_time)
+    {
+        snapshot.tooltip_text += L"\nUpdated " + helper_support::FormatAgeText(now_unix - snapshot.data_at_unix) + L", " + snapshot.source_text;
+        if (data_stale)
+            snapshot.tooltip_text += L" (stale)";
+    }
     if (!snapshot.error_text.empty())
     {
         snapshot.tooltip_text += L"\n";

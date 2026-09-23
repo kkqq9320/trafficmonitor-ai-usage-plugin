@@ -4,11 +4,11 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 
 const MODE = (process.argv[2] || 'once').toLowerCase();
-const DEFAULT_REFRESH_MS = parseInt(process.env.CLAUDE_WEB_HELPER_REFRESH_MS || '60000', 10);
 const BASE_DIR = process.env.LOCALAPPDATA
   ? path.join(process.env.LOCALAPPDATA, 'trafficmonitor-claude-usage-plugin')
   : path.join(os.homedir(), '.cache', 'trafficmonitor-claude-usage-plugin');
@@ -18,11 +18,60 @@ const COOKIES_DB_PATH = path.join(PROFILE_DIR, 'Default', 'Network', 'Cookies');
 const USAGE_CACHE_PATH = path.join(BASE_DIR, 'claude-web-usage.json');
 const STATUS_PATH = path.join(BASE_DIR, 'claude-web-helper-status.json');
 const WATCH_LOCK_PATH = path.join(BASE_DIR, 'claude-web-helper-watch.lock');
+const CONFIG_PATH = path.join(BASE_DIR, 'helper-config.json');
+const DEFAULT_REFRESH_MINUTES = 5;
+const MIN_REFRESH_MS = 60 * 1000;
+const MAX_BACKOFF_MS = 60 * 60 * 1000;
+const DEFAULT_REFRESH_MS = resolveRefreshMs();
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36';
 
 let cachedMasterKey = null;
 let watchLockHandle = null;
+
+// Refresh interval: CLAUDE_WEB_HELPER_REFRESH_MS, else claude_refresh_minutes in helper-config.json,
+// else 5 minutes. Never faster than once a minute.
+function resolveRefreshMs() {
+  const fromEnv = Number(process.env.CLAUDE_WEB_HELPER_REFRESH_MS);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) {
+    return Math.max(MIN_REFRESH_MS, Math.round(fromEnv));
+  }
+  let minutes = DEFAULT_REFRESH_MINUTES;
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+    const configured = Number(config && config.claude_refresh_minutes);
+    if (Number.isFinite(configured) && configured > 0) {
+      minutes = configured;
+    }
+  } catch {
+    // no config file: use the default
+  }
+  return Math.max(MIN_REFRESH_MS, Math.round(minutes * 60 * 1000));
+}
+
+// Retry-After is either delta-seconds or an HTTP date. Returns an absolute epoch ms or null.
+export function parseRetryAfter(value, nowMs) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const text = String(value).trim();
+  if (/^\d+(\.\d+)?$/.test(text)) {
+    return nowMs + Math.ceil(Number(text) * 1000);
+  }
+  const dateMs = Date.parse(text);
+  return Number.isFinite(dateMs) ? Math.max(nowMs, dateMs) : null;
+}
+
+// Delay before the next watch refresh. Rate limits wait for Retry-After (or back off
+// exponentially from the refresh interval when the header is missing).
+export function computeNextDelayMs({ state, refreshMs, consecutiveRateLimits, retryAfterAtMs, nowMs }) {
+  if (state !== 'rate_limited') {
+    return refreshMs;
+  }
+  const backoff = Math.min(MAX_BACKOFF_MS, refreshMs * 2 ** Math.max(0, consecutiveRateLimits));
+  const retryAfter = retryAfterAtMs ? Math.max(0, retryAfterAtMs - nowMs) : 0;
+  return Math.max(refreshMs, retryAfter || backoff);
+}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -425,6 +474,7 @@ async function fetchJsonWithCookies(url, cookieHeader) {
     const error = new Error(`HTTP ${response.status}`);
     error.code = 'HTTP_ERROR';
     error.httpStatus = response.status;
+    error.retryAfterAtMs = parseRetryAfter(response.headers.get('retry-after'), Date.now());
     error.body = text;
     throw error;
   }
@@ -521,24 +571,30 @@ function classifyError(error) {
 }
 
 function shouldRetainUsageSnapshotOnFailure(state) {
-  return state === 'request_failed';
+  return state === 'request_failed' || state === 'rate_limited';
 }
 
 async function writeUsagePayload(payload, organizationId, organizationName) {
   await ensureBaseDir();
-  await atomicWriteJson(USAGE_CACHE_PATH, payload);
+  await atomicWriteJson(USAGE_CACHE_PATH, { ...payload, refresh_ms: DEFAULT_REFRESH_MS });
   await writeStatus('ok', {
     organization_id: organizationId,
     organization_name: organizationName,
     usage_path: USAGE_CACHE_PATH,
+    refresh_ms: DEFAULT_REFRESH_MS,
   });
 }
 
-async function runOnce() {
+async function runOnce(watchState = null) {
   try {
     const { organizationId, organizationName, payload } = await fetchUsageSnapshot();
     await writeUsagePayload(payload, organizationId, organizationName);
     console.log(`Claude helper updated ${USAGE_CACHE_PATH}`);
+    if (watchState) {
+      watchState.lastState = 'ok';
+      watchState.consecutiveRateLimits = 0;
+      watchState.retryAfterAtMs = null;
+    }
     return 0;
   } catch (error) {
     await ensureBaseDir();
@@ -547,10 +603,18 @@ async function runOnce() {
     if (!retainedUsageSnapshot) {
       await removeFileIfExists(USAGE_CACHE_PATH);
     }
+    const retryAfterAtMs = error && error.retryAfterAtMs ? error.retryAfterAtMs : null;
+    if (watchState) {
+      watchState.lastState = state;
+      watchState.retryAfterAtMs = retryAfterAtMs;
+      watchState.consecutiveRateLimits = state === 'rate_limited' ? watchState.consecutiveRateLimits + 1 : 0;
+    }
     await writeStatus(state, {
       error: error && error.message ? error.message : String(error),
       retained_usage_snapshot: retainedUsageSnapshot,
       usage_path: retainedUsageSnapshot ? USAGE_CACHE_PATH : undefined,
+      retry_after_at: retryAfterAtMs ? new Date(retryAfterAtMs).toISOString() : undefined,
+      refresh_ms: DEFAULT_REFRESH_MS,
     });
     console.error(
       `Claude helper failed: ${error && error.message ? error.message : error}${
@@ -598,9 +662,20 @@ async function runWatch() {
   process.once('SIGTERM', () => releaseAndExit(0));
   process.once('exit', releaseWatchLock);
 
+  const watchState = { lastState: null, consecutiveRateLimits: 0, retryAfterAtMs: null };
   while (true) {
-    await runOnce();
-    await delay(DEFAULT_REFRESH_MS);
+    await runOnce(watchState);
+    const delayMs = computeNextDelayMs({
+      state: watchState.lastState,
+      refreshMs: DEFAULT_REFRESH_MS,
+      consecutiveRateLimits: watchState.consecutiveRateLimits - 1,
+      retryAfterAtMs: watchState.retryAfterAtMs,
+      nowMs: Date.now(),
+    });
+    if (watchState.lastState === 'rate_limited') {
+      console.log(`Claude helper rate limited; next request in ${Math.round(delayMs / 1000)}s`);
+    }
+    await delay(delayMs);
   }
 }
 
@@ -623,15 +698,21 @@ async function main() {
   }
 }
 
-main().catch(async (error) => {
-  try {
-    await ensureBaseDir();
-    await writeStatus('crashed', {
-      error: error && error.message ? error.message : String(error),
-    });
-  } catch {
-    // ignore secondary failure
-  }
-  console.error(error);
-  process.exitCode = 1;
-});
+// Run only when executed as a script, so tests can import the pure helpers without side effects.
+const invokedDirectly =
+  Boolean(process.argv[1]) && path.resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase();
+
+if (invokedDirectly) {
+  main().catch(async (error) => {
+    try {
+      await ensureBaseDir();
+      await writeStatus('crashed', {
+        error: error && error.message ? error.message : String(error),
+      });
+    } catch {
+      // ignore secondary failure
+    }
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

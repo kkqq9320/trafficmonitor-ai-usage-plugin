@@ -42,7 +42,15 @@ $scenarios = @(
     'both-windows',
     'swapped-windows',
     'legacy-no-window',
-    'unknown-window'
+    'unknown-window',
+    'mtime-touched-old-file',
+    'mixed-limit-ids',
+    'null-windows-newer',
+    'large-file-tail',
+    'helper-snapshot',
+    'stale-helper-uses-newer-jsonl',
+    'stale-and-reset-passed',
+    'helper-snapshot-update'
 )
 
 foreach ($scenario in $scenarios) {

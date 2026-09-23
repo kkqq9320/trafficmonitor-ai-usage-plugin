@@ -34,12 +34,20 @@ TrafficMonitor
    ├─ ClaudeUsagePlugin.dll
    └─ ClaudeUsagePlugin
       ├─ claude-web-helper.ps1
+      ├─ codex-usage-helper.ps1
+      ├─ helper-common.ps1
       └─ helper
-         └─ claude-web-helper
+         ├─ claude-web-helper
+         │  ├─ index.mjs
+         │  ├─ package.json
+         │  └─ package-lock.json
+         └─ codex-usage-helper
             ├─ index.mjs
-            ├─ package.json
-            └─ package-lock.json
+            ├─ lib.mjs
+            └─ package.json
 ```
+
+Both helpers need Node.js 22 or newer from a standard install location (for example `winget install OpenJS.NodeJS.LTS`) or a `node_path` in `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\helper-config.json`. PATH is not used.
 
 ## 3. Restart TrafficMonitor
 

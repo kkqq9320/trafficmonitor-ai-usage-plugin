@@ -2,7 +2,22 @@
 
 ## Unreleased
 
+### Added
+- Codex usage helper (`codex-usage-helper.ps1`, `helper\codex-usage-helper`). It reads the `codex` limit bucket from `codex app-server` `account/rateLimits/read`, falls back to `wham/usage` and then session JSONL, and writes `codex-usage.json`. It never sends a model request: only `initialize` / `account/rateLimits/read` and the `wham/usage` URL pass its allowlist.
+- The helper pushes new session JSONL rate-limit events immediately (file-system watcher) and asks the server every 15 minutes, after a known reset time, and when a session reports the usage limit, honoring HTTP 429 `Retry-After`.
+- `helper-config.json` for `node_path`, `claude_refresh_minutes`, `codex_server_refresh_minutes`, and `codex_path`.
+- Tooltips show data age, source, plan, and whether the Codex limit is reached. Stale values and values past their reset time are drawn dimmed.
+- Regression tests for mtime-only updates, mixed limit ids, files over 32 MB, null windows, helper snapshots, and stale display; Node tests for both helpers; a Codex helper wrapper test.
+
+### Changed
+- The plugin prefers the Codex helper snapshot and re-reads it only when its write time changes. Session JSONL is the fallback.
+- The Claude helper refreshes every 5 minutes by default instead of every 60 seconds, keeps the last snapshot on HTTP 429, and waits for `Retry-After`. The plugin accepts Claude snapshots up to 30 minutes old.
+- Both helpers run with a pinned Node.js (`node_path` or a standard install location) instead of the first `node` on PATH.
+
 ### Fixed
+- Codex showed an old percentage because the newest session file was chosen by modification time. Windows does not update that time while Codex keeps the file open, so events are now compared by their own timestamps.
+- Codex mixed in other limit buckets (`premium`, `codex_bengalfox`); only `limit_id: "codex"` is used now.
+- Session files larger than 32 MB were skipped; their newest events are now read from the end of the file.
 - The Claude helper now loads the `System.Security` assembly before calling `ProtectedData::Unprotect`, so cookie decryption no longer fails on machines that only have Windows PowerShell 5.1.
 - PowerShell invocation failures now report the underlying error from each candidate executable instead of a generic message.
 - `start` now launches the watcher when more than one `node` executable is on `PATH`, instead of failing with a `Start-Process` argument type error.

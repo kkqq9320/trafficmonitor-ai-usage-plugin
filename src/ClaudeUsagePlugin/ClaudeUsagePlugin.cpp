@@ -225,7 +225,8 @@ void CClaudeUsageItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark
     const DrawColors colors = GetDrawColors(m_window, dark_mode);
     const CClaudeUsageData::Metric metric = g_claude_usage_data.GetMetric(m_window);
     const std::wstring value_text = g_claude_usage_data.GetValueText(m_window);
-    DrawUsageItemBar(pDC, colors, GetItemLableText(), value_text.c_str(), GetItemValueSampleText(), metric.available, GetUsageRatio(metric), x, y, w, h);
+    // Stale values keep their number but are drawn dimmed.
+    DrawUsageItemBar(pDC, colors, GetItemLableText(), value_text.c_str(), GetItemValueSampleText(), metric.available && !metric.stale, GetUsageRatio(metric), x, y, w, h);
 }
 
 CCodexUsageItem::CCodexUsageItem(CodexUsageWindow window)
@@ -293,7 +294,8 @@ void CCodexUsageItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark_
     const DrawColors colors = GetCodexDrawColors(m_window, dark_mode);
     const CCodexUsageData::Metric metric = g_codex_usage_data.GetMetric(m_window);
     const std::wstring value_text = g_codex_usage_data.GetValueText(m_window);
-    DrawUsageItemBar(pDC, colors, GetItemLableText(), value_text.c_str(), GetItemValueSampleText(), metric.available, GetUsageRatio(metric), x, y, w, h);
+    // Stale values keep their number but are drawn dimmed.
+    DrawUsageItemBar(pDC, colors, GetItemLableText(), value_text.c_str(), GetItemValueSampleText(), metric.available && !metric.stale, GetUsageRatio(metric), x, y, w, h);
 }
 
 CClaudeUsagePlugin& CClaudeUsagePlugin::Instance()
@@ -323,6 +325,7 @@ void CClaudeUsagePlugin::OnInitialize(ITrafficMonitor* pApp)
 {
     (void)pApp;
     g_claude_usage_data.AutoStartBundledHelperIfNeeded();
+    g_codex_usage_data.AutoStartBundledHelperIfNeeded();
 }
 
 void CClaudeUsagePlugin::DataRequired()
@@ -349,7 +352,7 @@ const wchar_t* CClaudeUsagePlugin::GetInfo(PluginInfoIndex index)
         value = L"Copyright (C) 2026";
         break;
     case TMI_VERSION:
-        value = L"0.3.13";
+        value = L"0.4.0-kkqq.1";
         break;
     case TMI_URL:
         value = L"https://github.com/bemaru/trafficmonitor-ai-usage-plugin";

@@ -6,18 +6,43 @@ Claude usage limits:
 
 - Reads a fresh helper snapshot from `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\claude-web-usage.json`
 - The helper signs in through its own local Edge or Chrome profile, reads the saved Claude cookies from that profile, and calls `https://claude.ai/api/organizations/{lastActiveOrg}/usage`
-- If the helper snapshot is missing or stale, Claude shows unavailable instead of falling back to stale values
+- The helper refreshes every 5 minutes by default (`claude_refresh_minutes`, minimum 1 minute) and honors `Retry-After` on HTTP 429
+- A rate-limited or failed request keeps the last snapshot; the tooltip shows its age and the helper status
+- Snapshots older than two refresh intervals are drawn dimmed and marked stale; snapshots older than 30 minutes are dropped and Claude shows unavailable
 
 Codex usage limits:
 
-- Reads local Codex usage data from `%USERPROFILE%\.codex\sessions\**\*.jsonl`
-- Session JSONL files are the only supported Codex source; there is no `logs_2.sqlite` fallback
-- If no session JSONL file contains rate-limit payloads yet, Codex shows unavailable
-- Displays the used percentage for Codex in both the widget and tooltip
-- Converts local `remaining_percent` payloads to used percentage before display when needed
-- Classifies a `300` minute window as `X5h` and a `10080` minute window as `X7d`, regardless of whether the payload places it in `primary` or `secondary`
-- Uses the legacy `primary` / `secondary` mapping only when `window_minutes` is absent
+- Reads the Codex usage helper snapshot from `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\codex-usage.json` first; the file is re-read only when its write time changes (checked every 5 seconds)
+- The helper (`codex-usage-helper.ps1`) gets the `codex` limit bucket from, in order:
+  1. `codex app-server` `account/rateLimits/read` (Codex handles token refresh)
+  2. `GET https://chatgpt.com/backend-api/wham/usage` with the ChatGPT token in `auth.json` (read-only; the helper never refreshes or writes `auth.json`)
+  3. Session JSONL `token_count` events
+- None of these sources sends a model request or spends model tokens. The helper sends only `initialize` and `account/rateLimits/read` to the app-server and calls only the `wham/usage` URL; an allowlist rejects anything else
+- Push: the helper watches `sessions` with a file-system watcher and applies a new `codex` event with real windows immediately
+- Server requests: every 15 minutes (`codex_server_refresh_minutes`, minimum 30 seconds), shortly after a known `resets_at`, and when a session reports the usage limit; these extra requests stay 5 minutes apart from the previous request. Failures back off up to 60 minutes and HTTP 429 `Retry-After` is honored
+- When the helper snapshot is missing or older than 30 minutes, the plugin scans session JSONL itself:
+  - only `limit_id: "codex"` events with a non-null window are used (`premium`, model-specific buckets, and Anthropic-routed turns with null windows are ignored)
+  - the newest event is chosen by its own timestamp, not by file modification time. Codex keeps session files open while appending, and Windows does not advance their modification time until the file is closed
+  - the 32 most recently opened files are scanned from the end (up to 16 MB each, so large sessions are no longer skipped); later scans read only appended bytes
+- Classifies a 300-minute window (±1) as `X5h` and a 10080-minute window (±1) as `X7d` regardless of `primary` / `secondary` position; the legacy mapping is used only when `window_minutes` is absent
+- The tooltip shows data age, source, plan and whether the limit is reached. Values older than 30 minutes, or whose reset time has passed, are drawn dimmed and marked in the tooltip
 - Respects `CODEX_HOME` when it resolves to a Windows-readable path, including WSL-style `/mnt/c/...` paths
+
+## Helper Settings
+
+Optional settings live in `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\helper-config.json`:
+
+```json
+{
+  "node_path": "C:\\Program Files\\nodejs\\node.exe",
+  "claude_refresh_minutes": 5,
+  "codex_server_refresh_minutes": 15,
+  "codex_path": null
+}
+```
+
+- `node_path`: both helpers run with this Node.js (22+). PATH is not consulted, so another app's bundled `node.exe` is never picked up. When unset, the first working standard install (`%ProgramFiles%\nodejs`, `%ProgramFiles(x86)%\nodejs`, `%LOCALAPPDATA%\Programs\nodejs`) is pinned here. `TRAFFICMONITOR_AI_USAGE_NODE` overrides it
+- `codex_path`: Codex executable for the app-server request. When unset: `codex.exe` on PATH, then the newest `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`
 
 ## `CODEX_HOME` Notes
 
@@ -38,7 +63,7 @@ Codex usage limits:
 ## Claude Helper Prerequisites
 
 - Windows
-- Node.js 22 or newer
+- Node.js 22 or newer at a standard install location or `node_path` in `helper-config.json` (PATH is not used)
 - Microsoft Edge or Google Chrome installed locally
 
 ## Claude Helper Commands
@@ -79,8 +104,28 @@ powershell -ExecutionPolicy Bypass -File .\scripts\claude-web-helper.ps1 stop
 powershell -ExecutionPolicy Bypass -File .\scripts\claude-web-helper.ps1 watch
 ```
 
-- Repeats the cookie-based web fetch every 60 seconds in the foreground
+- Repeats the cookie-based web fetch every 5 minutes by default in the foreground
 - Useful only when you want console output for each refresh attempt
+
+## Codex Helper
+
+Files under `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\`:
+
+- Usage snapshot: `codex-usage.json` (`source`, `method`, `data_at`, `plan_type`, `rate_limit_reached_type`, `limit_reached`, `five_hour`, `seven_day`)
+- Helper status: `codex-usage-helper-status.json` (server attempts, next request time, `Retry-After`, last error)
+- Watch lock: `codex-usage-helper-watch.lock`
+
+Commands (deployed path: `.\plugins\ClaudeUsagePlugin\codex-usage-helper.ps1`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\codex-usage-helper.ps1 once    # one server request, JSONL fallback
+powershell -ExecutionPolicy Bypass -File .\scripts\codex-usage-helper.ps1 start   # hidden background watcher
+powershell -ExecutionPolicy Bypass -File .\scripts\codex-usage-helper.ps1 status  # snapshot, status, lock, Node.js path
+powershell -ExecutionPolicy Bypass -File .\scripts\codex-usage-helper.ps1 stop
+```
+
+The plugin starts the Codex watcher on load, the same way as the Claude watcher.
+
 
 ## Operational Notes
 
@@ -102,8 +147,7 @@ See [../PRIVACY.md](../PRIVACY.md) for the full local-data disclosure.
 
 ## Refresh Behavior
 
-- Claude helper fresh TTL: 90 seconds
-- Claude plugin refresh: 30 seconds
-- Claude helper watch refresh: 60 seconds
-- Codex success refresh: 60 seconds
-- Codex failure retry: 5 seconds
+- Claude helper watch refresh: 5 minutes (configurable, minimum 1 minute); 429 waits for `Retry-After` or backs off up to 60 minutes
+- Claude plugin refresh: 30 seconds; snapshot stale after two helper intervals, dropped after 30 minutes
+- Codex helper: session JSONL push (immediate); server every 15 minutes plus reset and usage-limit triggers (5 minutes apart); failure backoff up to 60 minutes; 429 `Retry-After`
+- Codex plugin: helper snapshot write-time check every 5 seconds; its own JSONL scan every 60 seconds only while the helper snapshot is missing or older than 30 minutes
