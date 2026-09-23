@@ -45,7 +45,7 @@ test('Claude Code activity pulls the next fetch forward, at most once a minute',
   const fetchedAt = Date.parse('2026-09-24T00:00:00Z');
   const next = (overrides) =>
     helper.computeNextFetchAtMs({
-      lastFetchStartedAtMs: fetchedAt,
+      lastFetchAtMs: fetchedAt,
       pendingActivitySinceMs: null,
       state: 'ok',
       refreshMs: 5 * MIN,
@@ -81,7 +81,7 @@ test('Claude Code activity never overrides a rate limit or a sign-in problem', (
   const fetchedAt = Date.parse('2026-09-24T00:00:00Z');
   const activity = Date.parse('2026-09-24T00:00:10Z');
   const base = {
-    lastFetchStartedAtMs: fetchedAt,
+    lastFetchAtMs: fetchedAt,
     pendingActivitySinceMs: activity,
     refreshMs: 5 * MIN,
     consecutiveRateLimits: 1,
@@ -103,4 +103,47 @@ test('Claude Code activity never overrides a rate limit or a sign-in problem', (
     Date.parse('2026-09-24T00:05:00Z'),
     'sign-in problems are not retried faster',
   );
+});
+
+// A watch schedule driven by hand-set clocks: `mono` is the monotonic clock, `wall` the system clock.
+function scheduleWithClocks() {
+  const clocks = { mono: 0, wall: Date.parse('2026-09-24T00:00:00Z') };
+  const schedule = helper.createWatchSchedule({ refreshMs: 5 * MIN, now: () => clocks.mono, wallNow: () => clocks.wall });
+  const ok = { lastState: 'ok', consecutiveRateLimits: 0, retryAfterAtMs: null };
+  return { clocks, schedule, ok };
+}
+
+test('the next fetch is spaced from when the previous fetch finished', () => {
+  const { clocks, schedule, ok } = scheduleWithClocks();
+  schedule.fetchStarted();
+  clocks.mono = 2000;
+  schedule.noteActivity();
+  clocks.mono = 70_000; // a slow 70 s request
+  schedule.fetchCompleted(ok);
+  assert.equal(schedule.msUntilNextFetch(), 60_000, 'activity during a slow fetch waits a full minute after it finished');
+});
+
+test('activity before a fetch starts is covered by that fetch', () => {
+  const { clocks, schedule, ok } = scheduleWithClocks();
+  schedule.noteActivity();
+  clocks.mono = 1000;
+  schedule.fetchStarted();
+  clocks.mono = 2000;
+  schedule.fetchCompleted(ok);
+  assert.equal(schedule.msUntilNextFetch(), 5 * MIN);
+});
+
+test('a system clock change does not move the schedule', () => {
+  const { clocks, schedule } = scheduleWithClocks();
+  schedule.fetchStarted();
+  schedule.fetchCompleted({ lastState: 'rate_limited', consecutiveRateLimits: 1, retryAfterAtMs: clocks.wall + 30 * MIN });
+  clocks.wall -= 60 * MIN; // clock corrected back one hour
+  clocks.mono = 10 * MIN;
+  assert.equal(schedule.msUntilNextFetch(), 20 * MIN, 'Retry-After still ends 30 minutes after the response');
+
+  schedule.fetchStarted();
+  schedule.fetchCompleted({ lastState: 'ok', consecutiveRateLimits: 0, retryAfterAtMs: null });
+  clocks.wall -= 60 * MIN;
+  clocks.mono += 1 * MIN;
+  assert.equal(schedule.msUntilNextFetch(), 4 * MIN, 'idle refresh still 5 minutes after the fetch');
 });

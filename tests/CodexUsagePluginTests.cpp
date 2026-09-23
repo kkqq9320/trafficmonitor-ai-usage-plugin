@@ -237,6 +237,32 @@ std::vector<Scenario> BuildScenarios()
         return true;
     } });
 
+    // A new snapshot that cannot be read yet (the file is held open) is read again on the next check.
+    scenarios.push_back(Scenario{ L"claude-snapshot-read-retry", [](const Fixture& fixture) {
+        WriteText(fixture.plugin_cache / L"claude-web-usage.json", ClaudeSnapshot(27, 17));
+    }, L"--", L"--", {}, {}, [](const Fixture& fixture, ITMPlugin* plugin) {
+        const fs::path snapshot = fixture.plugin_cache / L"claude-web-usage.json";
+        WriteText(snapshot, ClaudeSnapshot(38, 19));
+        HANDLE held = CreateFileW(snapshot.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (held == INVALID_HANDLE_VALUE)
+        {
+            std::wcerr << L"Could not hold the snapshot open.\n";
+            return false;
+        }
+        Sleep(6000);
+        plugin->DataRequired();
+        CloseHandle(held);
+        Sleep(6000);
+        plugin->DataRequired();
+        const std::wstring after = plugin->GetItem(0)->GetItemValueText();
+        if (after != L"38%")
+        {
+            std::wcerr << L"Claude 5h after the snapshot became readable: expected \"38%\", got \"" << after << L"\".\n";
+            return false;
+        }
+        return true;
+    } });
+
     return scenarios;
 }
 

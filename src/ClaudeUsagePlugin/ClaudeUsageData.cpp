@@ -767,7 +767,6 @@ bool TryLoadHelperUsageSnapshot(CClaudeUsageData::Snapshot& snapshot, bool requi
     unsigned long long last_write_time_ms{};
     if (!GetFileLastWriteTimeMs(helper_cache_path, last_write_time_ms))
         return false;
-    snapshot.helper_write_time_ms = last_write_time_ms;
 
     if (require_fresh_cache)
     {
@@ -775,12 +774,17 @@ bool TryLoadHelperUsageSnapshot(CClaudeUsageData::Snapshot& snapshot, bool requi
         if (!GetCurrentTimeMs(now_ms))
             return false;
         if (now_ms >= last_write_time_ms && now_ms - last_write_time_ms > HELPER_CACHE_MAX_AGE_MS)
+        {
+            snapshot.helper_write_time_ms = last_write_time_ms;  // seen; only a newer write needs a reload
             return false;
+        }
     }
 
+    // A read failure leaves the write time unrecorded, so the next change check reads the file again.
     std::wstring cached_json;
     if (!ReadUtf8File(helper_cache_path, cached_json))
         return false;
+    snapshot.helper_write_time_ms = last_write_time_ms;
 
     CClaudeUsageData::Snapshot cached_snapshot;
     if (!LoadSnapshotFromCachedJson(cached_json, cached_snapshot))

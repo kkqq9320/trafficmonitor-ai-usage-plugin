@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 // Point the helper at an empty temporary base dir before importing it.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-claude-activity-test-'));
@@ -60,6 +62,20 @@ test('files other than transcripts are ignored', async () => {
   } finally {
     watcher.close();
   }
+});
+
+test('the transcript watcher never keeps a finished helper process alive', () => {
+  const projects = path.join(root, 'exit', 'projects');
+  fs.mkdirSync(projects, { recursive: true });
+  const script =
+    `import(${JSON.stringify(pathToFileURL(path.join(import.meta.dirname, '..', 'index.mjs')).href)})` +
+    `.then((m) => { m.watchClaudeActivity(${JSON.stringify(projects)}, () => {}); });`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    env: { ...process.env, LOCALAPPDATA: path.join(root, 'local') },
+    timeout: 5000,
+  });
+  assert.equal(result.error, undefined, 'helper process did not exit while the watcher was open');
+  assert.equal(result.status, 0);
 });
 
 test('a projects folder created after start is picked up on retry', async () => {

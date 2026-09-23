@@ -76,11 +76,11 @@ export function computeNextDelayMs({ state, refreshMs, consecutiveRateLimits, re
   return Math.max(refreshMs, retryAfter || backoff);
 }
 
-// When the next watch fetch is due. Claude Code activity after the last fetch pulls it forward to
-// ACTIVITY_SETTLE_MS after the activity, but never sooner than ACTIVE_MIN_INTERVAL_MS after the
-// last fetch. Rate limits and sign-in problems keep their regular schedule.
+// When the next watch fetch is due, measured from when the last fetch finished. Claude Code activity
+// pulls it forward to ACTIVITY_SETTLE_MS after the activity, but never sooner than
+// ACTIVE_MIN_INTERVAL_MS after the last fetch. Rate limits and sign-in problems keep their schedule.
 export function computeNextFetchAtMs({
-  lastFetchStartedAtMs,
+  lastFetchAtMs,
   pendingActivitySinceMs,
   state,
   refreshMs,
@@ -88,19 +88,64 @@ export function computeNextFetchAtMs({
   retryAfterAtMs,
 }) {
   const scheduledAt =
-    lastFetchStartedAtMs +
+    lastFetchAtMs +
     computeNextDelayMs({
       state,
       refreshMs,
       consecutiveRateLimits: consecutiveRateLimits - 1,
       retryAfterAtMs,
-      nowMs: lastFetchStartedAtMs,
+      nowMs: lastFetchAtMs,
     });
   if (pendingActivitySinceMs === null || !ACTIVITY_REFRESH_STATES.has(state)) {
     return scheduledAt;
   }
-  const activityAt = Math.max(lastFetchStartedAtMs + ACTIVE_MIN_INTERVAL_MS, pendingActivitySinceMs + ACTIVITY_SETTLE_MS);
+  const activityAt = Math.max(lastFetchAtMs + ACTIVE_MIN_INTERVAL_MS, pendingActivitySinceMs + ACTIVITY_SETTLE_MS);
   return Math.min(scheduledAt, activityAt);
+}
+
+// Watch-mode schedule on a monotonic clock, so a system clock change never stalls or rushes a fetch.
+// Retry-After arrives as a wall-clock time and is converted once, when the fetch finishes.
+export function createWatchSchedule({ refreshMs, now = () => performance.now(), wallNow = () => Date.now() }) {
+  let lastFetchAtMs = null;
+  let pendingActivitySinceMs = null;
+  let result = { lastState: null, consecutiveRateLimits: 0, retryAfterAtMs: null };
+
+  return {
+    // Returns true when this is the first activity since the last fetch started.
+    noteActivity() {
+      if (pendingActivitySinceMs !== null) {
+        return false;
+      }
+      pendingActivitySinceMs = now();
+      return true;
+    },
+    // Activity before a fetch is covered by it; activity during the fetch schedules the next one.
+    fetchStarted() {
+      pendingActivitySinceMs = null;
+    },
+    fetchCompleted({ lastState, consecutiveRateLimits, retryAfterAtMs }) {
+      lastFetchAtMs = now();
+      result = {
+        lastState,
+        consecutiveRateLimits,
+        retryAfterAtMs: retryAfterAtMs ? lastFetchAtMs + (retryAfterAtMs - wallNow()) : null,
+      };
+    },
+    msUntilNextFetch() {
+      if (lastFetchAtMs === null) {
+        return 0;
+      }
+      const nextAtMs = computeNextFetchAtMs({
+        lastFetchAtMs,
+        pendingActivitySinceMs,
+        state: result.lastState,
+        refreshMs,
+        consecutiveRateLimits: result.consecutiveRateLimits,
+        retryAfterAtMs: result.retryAfterAtMs,
+      });
+      return nextAtMs - now();
+    },
+  };
 }
 
 // Claude Code writes its session transcripts to <config dir>\projects\<project>\*.jsonl.
@@ -136,6 +181,8 @@ export function watchClaudeActivity(dir, onActivity, { retryMs = 60 * 1000 } = {
         }
         onActivity();
       });
+      // The watch loop's own timers keep the helper running; the watcher must not keep a failed one alive.
+      watcher.unref();
       watcher.on('error', () => {
         watcher.close();
         watcher = null;
@@ -745,40 +792,25 @@ async function runWatch() {
   process.once('SIGTERM', () => releaseAndExit(0));
   process.once('exit', releaseWatchLock);
 
-  const watchState = {
-    lastState: null,
-    consecutiveRateLimits: 0,
-    retryAfterAtMs: null,
-    lastFetchStartedAtMs: 0,
-    pendingActivitySinceMs: null,
-  };
+  const watchState = { lastState: null, consecutiveRateLimits: 0, retryAfterAtMs: null };
+  const schedule = createWatchSchedule({ refreshMs: DEFAULT_REFRESH_MS });
   let wakeUp = null;
   watchClaudeActivity(resolveClaudeProjectsDir(), () => {
-    if (watchState.pendingActivitySinceMs === null) {
-      watchState.pendingActivitySinceMs = Date.now();
-      if (wakeUp) {
-        wakeUp();
-      }
+    if (schedule.noteActivity() && wakeUp) {
+      wakeUp();
     }
   });
 
   while (true) {
-    // Activity before this fetch is covered by it; activity during the fetch schedules the next one.
-    watchState.pendingActivitySinceMs = null;
-    watchState.lastFetchStartedAtMs = Date.now();
+    schedule.fetchStarted();
     await runOnce(watchState);
+    schedule.fetchCompleted(watchState);
 
-    const scheduledAtMs = computeNextFetchAtMs({ ...watchState, state: watchState.lastState, refreshMs: DEFAULT_REFRESH_MS });
     if (watchState.lastState === 'rate_limited') {
-      console.log(`Claude helper rate limited; next request in ${Math.round((scheduledAtMs - Date.now()) / 1000)}s`);
+      console.log(`Claude helper rate limited; next request in ${Math.round(schedule.msUntilNextFetch() / 1000)}s`);
     }
-    for (;;) {
-      const nextAtMs = computeNextFetchAtMs({ ...watchState, state: watchState.lastState, refreshMs: DEFAULT_REFRESH_MS });
-      const waitMs = nextAtMs - Date.now();
-      if (waitMs <= 0) {
-        break;
-      }
-      // Wait in bounded steps so an activity wake-up or a clock change is picked up promptly.
+    for (let waitMs = schedule.msUntilNextFetch(); waitMs > 0; waitMs = schedule.msUntilNextFetch()) {
+      // Wait in bounded steps; an activity wake-up ends the wait early.
       await new Promise((resolve) => {
         const timer = setTimeout(resolve, Math.min(waitMs, 60 * 1000));
         wakeUp = () => {

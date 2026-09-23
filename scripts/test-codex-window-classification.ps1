@@ -51,7 +51,8 @@ $scenarios = @(
     'stale-helper-uses-newer-jsonl',
     'stale-and-reset-passed',
     'helper-snapshot-update',
-    'claude-snapshot-update'
+    'claude-snapshot-update',
+    'claude-snapshot-read-retry'
 )
 
 foreach ($scenario in $scenarios) {
