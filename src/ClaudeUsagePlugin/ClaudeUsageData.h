@@ -37,6 +37,7 @@ public:
         bool has_data_time{};
         long long data_at_unix{};
         unsigned long long refresh_ms{};
+        unsigned long long helper_write_time_ms{};  // write time of the helper snapshot file that was read
     };
 
     void RefreshIfNeeded();
@@ -57,6 +58,7 @@ private:
     mutable std::mutex m_state_mutex;
     Snapshot m_snapshot;
     unsigned long long m_last_refresh_tick{};
+    unsigned long long m_last_change_check_tick{};
     unsigned long long m_next_refresh_tick{};
     bool m_last_refresh_succeeded{};
     bool m_refresh_in_progress{};

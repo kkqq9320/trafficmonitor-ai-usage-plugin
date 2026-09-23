@@ -15,6 +15,7 @@
 - Both helpers run with a pinned Node.js (`node_path` or a standard install location) instead of the first `node` on PATH.
 
 ### Fixed
+- Claude values lagged claude.ai by up to five and a half minutes while Claude Code was in use. The helper now watches the Claude Code transcript folder (`%USERPROFILE%\.claude\projects`, or `CLAUDE_CONFIG_DIR`) and refreshes 5 seconds after new activity, at most once a minute; when idle it keeps the 5-minute interval. The plugin shows a new helper snapshot within 5 seconds instead of on its 30-second reload.
 - Codex showed an old percentage because the newest session file was chosen by modification time. Windows does not update that time while Codex keeps the file open, so events are now compared by their own timestamps.
 - Codex mixed in other limit buckets (`premium`, `codex_bengalfox`); only `limit_id: "codex"` is used now.
 - Session files larger than 32 MB were skipped; their newest events are now read from the end of the file.

@@ -13,6 +13,8 @@ namespace
 constexpr unsigned long long REFRESH_INTERVAL_MS = 30ULL * 1000ULL;
 constexpr unsigned long long RETRY_INTERVAL_MS = 30ULL * 1000ULL;
 constexpr unsigned long long BACKOFF_RECHECK_INTERVAL_MS = 5ULL * 1000ULL;
+// Between full reloads, a new helper snapshot is noticed by its write time.
+constexpr unsigned long long SNAPSHOT_CHANGE_CHECK_INTERVAL_MS = 5ULL * 1000ULL;
 // The helper refreshes every 5 minutes by default (configurable), so a snapshot stays usable for
 // 30 minutes and is marked stale once it is older than two refresh intervals.
 constexpr unsigned long long HELPER_CACHE_MAX_AGE_MS = 30ULL * 60ULL * 1000ULL;
@@ -765,6 +767,7 @@ bool TryLoadHelperUsageSnapshot(CClaudeUsageData::Snapshot& snapshot, bool requi
     unsigned long long last_write_time_ms{};
     if (!GetFileLastWriteTimeMs(helper_cache_path, last_write_time_ms))
         return false;
+    snapshot.helper_write_time_ms = last_write_time_ms;
 
     if (require_fresh_cache)
     {
@@ -798,6 +801,12 @@ bool TryLoadHelperUsageSnapshot(CClaudeUsageData::Snapshot& snapshot, bool requi
 unsigned long long GetRefreshIntervalMs(bool last_refresh_succeeded)
 {
     return (last_refresh_succeeded ? REFRESH_INTERVAL_MS : RETRY_INTERVAL_MS);
+}
+
+bool HelperSnapshotWriteTimeChanged(unsigned long long loaded_write_time_ms)
+{
+    unsigned long long write_time_ms{};
+    return GetFileLastWriteTimeMs(GetHelperCachePath(), write_time_ms) && write_time_ms != loaded_write_time_ms;
 }
 
 std::wstring BuildHelperStatusSummary(const std::wstring& state, const std::wstring& error_text)
@@ -934,7 +943,13 @@ void CClaudeUsageData::RefreshIfNeeded()
             {
                 const unsigned long long refresh_interval_ms = GetRefreshIntervalMs(m_last_refresh_succeeded);
                 if (m_last_refresh_tick != 0 && started_at - m_last_refresh_tick < refresh_interval_ms)
-                    return;
+                {
+                    if (started_at - m_last_change_check_tick < SNAPSHOT_CHANGE_CHECK_INTERVAL_MS)
+                        return;
+                    m_last_change_check_tick = started_at;
+                    if (!HelperSnapshotWriteTimeChanged(m_snapshot.helper_write_time_ms))
+                        return;
+                }
             }
         }
 

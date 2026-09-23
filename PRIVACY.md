@@ -18,6 +18,10 @@ Anthropic plugin API.
   active organization's usage data.
 - The helper writes local status and usage snapshot files under
   `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin`.
+- To refresh sooner while Claude Code is in use, the helper watches the Claude
+  Code transcript folder (`%USERPROFILE%\.claude\projects`, or
+  `CLAUDE_CONFIG_DIR\projects`) for file-change notifications. It only uses the
+  fact that a `.jsonl` file changed; it never opens or reads the transcripts.
 
 Local Claude helper files can include usage-limit data, organization
 identifiers or names, local file paths, and troubleshooting error text. Do not

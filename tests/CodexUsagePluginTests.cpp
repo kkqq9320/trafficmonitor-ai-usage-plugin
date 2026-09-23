@@ -96,6 +96,20 @@ std::string HelperSnapshot(long long data_at, const std::string& seven_day, cons
         R"(  "seven_day": )" + seven_day + "\n}\n";
 }
 
+// Same shape as the Claude web helper's claude-web-usage.json.
+std::string ClaudeSnapshot(int five_hour, int seven_day)
+{
+    auto window = [](int utilization) {
+        return R"({ "utilization": )" + std::to_string(utilization) +
+            R"(, "resets_at": "2030-01-01T00:00:00.000000+00:00", "limit_dollars": null, "used_dollars": null, "remaining_dollars": null, "locked_reason": null })";
+    };
+    return std::string("{\n") +
+        R"(  "source": "claude-web-helper", "generated_at": ")" + IsoUtc(NowUnix()) + "\",\n" +
+        R"(  "five_hour": )" + window(five_hour) + ",\n" +
+        R"(  "seven_day": )" + window(seven_day) + ",\n" +
+        R"(  "seven_day_sonnet": null, "extra_usage": null, "refresh_ms": 300000)" + "\n}\n";
+}
+
 struct Scenario
 {
     const wchar_t* name;
@@ -196,6 +210,28 @@ std::vector<Scenario> BuildScenarios()
         if (actual != L"100%")
         {
             std::wcerr << L"After snapshot update: expected \"100%\", got \"" << actual << L"\".\n";
+            return false;
+        }
+        return true;
+    } });
+
+    // A new Claude helper snapshot must reach the taskbar within seconds, not on the next 30 s reload.
+    scenarios.push_back(Scenario{ L"claude-snapshot-update", [](const Fixture& fixture) {
+        WriteText(fixture.plugin_cache / L"claude-web-usage.json", ClaudeSnapshot(27, 17));
+    }, L"--", L"--", {}, {}, [](const Fixture& fixture, ITMPlugin* plugin) {
+        const std::wstring before = plugin->GetItem(0)->GetItemValueText();
+        if (before != L"27%")
+        {
+            std::wcerr << L"Claude 5h before update: expected \"27%\", got \"" << before << L"\".\n";
+            return false;
+        }
+        WriteText(fixture.plugin_cache / L"claude-web-usage.json", ClaudeSnapshot(38, 19));
+        Sleep(6000);
+        plugin->DataRequired();
+        const std::wstring after = plugin->GetItem(0)->GetItemValueText();
+        if (after != L"38%")
+        {
+            std::wcerr << L"Claude 5h after snapshot update: expected \"38%\", got \"" << after << L"\".\n";
             return false;
         }
         return true;

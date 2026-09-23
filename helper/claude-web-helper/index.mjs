@@ -22,6 +22,9 @@ const CONFIG_PATH = path.join(BASE_DIR, 'helper-config.json');
 const DEFAULT_REFRESH_MINUTES = 5;
 const MIN_REFRESH_MS = 60 * 1000;
 const MAX_BACKOFF_MS = 60 * 60 * 1000;
+const ACTIVE_MIN_INTERVAL_MS = 60 * 1000;
+const ACTIVITY_SETTLE_MS = 5 * 1000;
+const ACTIVITY_REFRESH_STATES = new Set(['ok', 'request_failed']);
 const DEFAULT_REFRESH_MS = resolveRefreshMs();
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36';
@@ -73,8 +76,88 @@ export function computeNextDelayMs({ state, refreshMs, consecutiveRateLimits, re
   return Math.max(refreshMs, retryAfter || backoff);
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// When the next watch fetch is due. Claude Code activity after the last fetch pulls it forward to
+// ACTIVITY_SETTLE_MS after the activity, but never sooner than ACTIVE_MIN_INTERVAL_MS after the
+// last fetch. Rate limits and sign-in problems keep their regular schedule.
+export function computeNextFetchAtMs({
+  lastFetchStartedAtMs,
+  pendingActivitySinceMs,
+  state,
+  refreshMs,
+  consecutiveRateLimits,
+  retryAfterAtMs,
+}) {
+  const scheduledAt =
+    lastFetchStartedAtMs +
+    computeNextDelayMs({
+      state,
+      refreshMs,
+      consecutiveRateLimits: consecutiveRateLimits - 1,
+      retryAfterAtMs,
+      nowMs: lastFetchStartedAtMs,
+    });
+  if (pendingActivitySinceMs === null || !ACTIVITY_REFRESH_STATES.has(state)) {
+    return scheduledAt;
+  }
+  const activityAt = Math.max(lastFetchStartedAtMs + ACTIVE_MIN_INTERVAL_MS, pendingActivitySinceMs + ACTIVITY_SETTLE_MS);
+  return Math.min(scheduledAt, activityAt);
+}
+
+// Claude Code writes its session transcripts to <config dir>\projects\<project>\*.jsonl.
+export function resolveClaudeProjectsDir(env = process.env) {
+  const configDir = String(env.CLAUDE_CONFIG_DIR || '').trim() || path.join(env.USERPROFILE || os.homedir(), '.claude');
+  return path.join(configDir, 'projects');
+}
+
+// Calls onActivity whenever a Claude Code transcript changes. A missing folder or a watcher error
+// is retried every retryMs, so a later Claude Code install is picked up without a restart.
+export function watchClaudeActivity(dir, onActivity, { retryMs = 60 * 1000 } = {}) {
+  let watcher = null;
+  let retryTimer = null;
+  let closed = false;
+
+  const scheduleRetry = () => {
+    if (closed) {
+      return;
+    }
+    retryTimer = setTimeout(start, retryMs);
+    retryTimer.unref();
+  };
+
+  function start() {
+    if (closed) {
+      return;
+    }
+    try {
+      watcher = fs.watch(dir, { recursive: true }, (_event, filename) => {
+        // A missing file name means the change buffer overflowed; count it as activity.
+        if (filename && !String(filename).toLowerCase().endsWith('.jsonl')) {
+          return;
+        }
+        onActivity();
+      });
+      watcher.on('error', () => {
+        watcher.close();
+        watcher = null;
+        scheduleRetry();
+      });
+    } catch {
+      watcher = null;
+      scheduleRetry();
+    }
+  }
+
+  start();
+  return {
+    close() {
+      closed = true;
+      clearTimeout(retryTimer);
+      if (watcher) {
+        watcher.close();
+      }
+      watcher = null;
+    },
+  };
 }
 
 function getBrowserPath() {
@@ -662,20 +745,49 @@ async function runWatch() {
   process.once('SIGTERM', () => releaseAndExit(0));
   process.once('exit', releaseWatchLock);
 
-  const watchState = { lastState: null, consecutiveRateLimits: 0, retryAfterAtMs: null };
-  while (true) {
-    await runOnce(watchState);
-    const delayMs = computeNextDelayMs({
-      state: watchState.lastState,
-      refreshMs: DEFAULT_REFRESH_MS,
-      consecutiveRateLimits: watchState.consecutiveRateLimits - 1,
-      retryAfterAtMs: watchState.retryAfterAtMs,
-      nowMs: Date.now(),
-    });
-    if (watchState.lastState === 'rate_limited') {
-      console.log(`Claude helper rate limited; next request in ${Math.round(delayMs / 1000)}s`);
+  const watchState = {
+    lastState: null,
+    consecutiveRateLimits: 0,
+    retryAfterAtMs: null,
+    lastFetchStartedAtMs: 0,
+    pendingActivitySinceMs: null,
+  };
+  let wakeUp = null;
+  watchClaudeActivity(resolveClaudeProjectsDir(), () => {
+    if (watchState.pendingActivitySinceMs === null) {
+      watchState.pendingActivitySinceMs = Date.now();
+      if (wakeUp) {
+        wakeUp();
+      }
     }
-    await delay(delayMs);
+  });
+
+  while (true) {
+    // Activity before this fetch is covered by it; activity during the fetch schedules the next one.
+    watchState.pendingActivitySinceMs = null;
+    watchState.lastFetchStartedAtMs = Date.now();
+    await runOnce(watchState);
+
+    const scheduledAtMs = computeNextFetchAtMs({ ...watchState, state: watchState.lastState, refreshMs: DEFAULT_REFRESH_MS });
+    if (watchState.lastState === 'rate_limited') {
+      console.log(`Claude helper rate limited; next request in ${Math.round((scheduledAtMs - Date.now()) / 1000)}s`);
+    }
+    for (;;) {
+      const nextAtMs = computeNextFetchAtMs({ ...watchState, state: watchState.lastState, refreshMs: DEFAULT_REFRESH_MS });
+      const waitMs = nextAtMs - Date.now();
+      if (waitMs <= 0) {
+        break;
+      }
+      // Wait in bounded steps so an activity wake-up or a clock change is picked up promptly.
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, Math.min(waitMs, 60 * 1000));
+        wakeUp = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      wakeUp = null;
+    }
   }
 }
 

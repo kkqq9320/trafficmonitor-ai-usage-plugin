@@ -7,6 +7,8 @@ Claude usage limits:
 - Reads a fresh helper snapshot from `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\claude-web-usage.json`
 - The helper signs in through its own local Edge or Chrome profile, reads the saved Claude cookies from that profile, and calls `https://claude.ai/api/organizations/{lastActiveOrg}/usage`
 - The helper refreshes every 5 minutes by default (`claude_refresh_minutes`, minimum 1 minute) and honors `Retry-After` on HTTP 429
+- While Claude Code is in use, the helper refreshes sooner: it watches the transcript folder (`%USERPROFILE%\.claude\projects`, or `CLAUDE_CONFIG_DIR\projects`) and fetches 5 seconds after new activity, at most once a minute. It only notices that a `.jsonl` file changed; it never reads the transcripts. Rate limits and sign-in problems keep the regular schedule, and usage from claude.ai or the Claude app alone is picked up on the regular refresh
+- The plugin checks the snapshot's write time every 5 seconds and shows a new snapshot right away
 - A rate-limited or failed request keeps the last snapshot; the tooltip shows its age and the helper status
 - Snapshots older than two refresh intervals are drawn dimmed and marked stale; snapshots older than 30 minutes are dropped and Claude shows unavailable
 
@@ -104,7 +106,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\claude-web-helper.ps1 stop
 powershell -ExecutionPolicy Bypass -File .\scripts\claude-web-helper.ps1 watch
 ```
 
-- Repeats the cookie-based web fetch every 5 minutes by default in the foreground
+- Repeats the cookie-based web fetch every 5 minutes by default (about once a minute while Claude Code is active) in the foreground
 - Useful only when you want console output for each refresh attempt
 
 ## Codex Helper
@@ -147,7 +149,7 @@ See [../PRIVACY.md](../PRIVACY.md) for the full local-data disclosure.
 
 ## Refresh Behavior
 
-- Claude helper watch refresh: 5 minutes (configurable, minimum 1 minute); 429 waits for `Retry-After` or backs off up to 60 minutes
-- Claude plugin refresh: 30 seconds; snapshot stale after two helper intervals, dropped after 30 minutes
+- Claude helper watch refresh: 5 minutes (configurable, minimum 1 minute); Claude Code activity pulls it forward to 5 seconds after the activity, at most once a minute; 429 waits for `Retry-After` or backs off up to 60 minutes
+- Claude plugin refresh: snapshot write-time check every 5 seconds, full reload every 30 seconds; snapshot stale after two helper intervals, dropped after 30 minutes
 - Codex helper: session JSONL push (immediate); server every 15 minutes plus reset and usage-limit triggers (5 minutes apart); failure backoff up to 60 minutes; 429 `Retry-After`
 - Codex plugin: helper snapshot write-time check every 5 seconds; its own JSONL scan every 60 seconds only while the helper snapshot is missing or older than 30 minutes
