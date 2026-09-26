@@ -402,6 +402,38 @@ function classifyBody(text) {
   return 'unknown';
 }
 
+// cedar_ember=1 adds the usage-limit reset grants (read only); other fields stay as without it.
+export function buildUsageUrl(organizationId) {
+  return `https://claude.ai/api/organizations/${organizationId}/usage?cedar_ember=1`;
+}
+
+// Usage-limit reset grants -> { available_count, earliest_expires_at } counted like the claude.ai
+// settings page: unpaused grants, resets_left each (a usable grant with 0 left counts once).
+// Returns null when the account is not eligible or the field is missing.
+export function summarizeResetGrants(cedarEmber) {
+  if (!cedarEmber || typeof cedarEmber !== 'object' || cedarEmber.eligible !== true) {
+    return null;
+  }
+  let count = 0;
+  let earliest = null;
+  for (const grant of Array.isArray(cedarEmber.grants) ? cedarEmber.grants : []) {
+    if (!grant || grant.paused === true) {
+      continue;
+    }
+    const left = Number.isFinite(grant.resets_left) && grant.resets_left > 0 ? Math.trunc(grant.resets_left) : grant.usable_now === true ? 1 : 0;
+    if (left === 0) {
+      continue;
+    }
+    count += left;
+    const endsAtMs = Date.parse(grant.ends_at);
+    if (Number.isFinite(endsAtMs)) {
+      const endsAt = Math.floor(endsAtMs / 1000);
+      earliest = earliest === null ? endsAt : Math.min(earliest, endsAt);
+    }
+  }
+  return { available_count: count, earliest_expires_at: earliest };
+}
+
 function normalizeUsagePayload(raw) {
   if (!raw || typeof raw !== 'object') {
     throw new Error('Invalid usage payload');
@@ -418,6 +450,7 @@ function normalizeUsagePayload(raw) {
     seven_day: raw.seven_day || null,
     seven_day_sonnet: raw.seven_day_sonnet || null,
     extra_usage: raw.extra_usage || null,
+    reset_credits: summarizeResetGrants(raw.cedar_ember),
   };
 }
 
@@ -645,7 +678,7 @@ async function fetchUsageForOrganization(cookieHeader, organizationId, organizat
     throw new Error('Organization id not found');
   }
 
-  const usage = await fetchJsonWithCookies(`https://claude.ai/api/organizations/${organizationId}/usage`, cookieHeader);
+  const usage = await fetchJsonWithCookies(buildUsageUrl(organizationId), cookieHeader);
   const payload = normalizeUsagePayload(usage);
   return { organizationId, organizationName, payload };
 }

@@ -38,6 +38,11 @@ public:
         long long data_at_unix{};
         unsigned long long refresh_ms{};
         unsigned long long helper_write_time_ms{};  // write time of the helper snapshot file that was read
+        // Usage-limit reset grants the account holds (read only; never used by the plugin).
+        bool has_reset_credits{};
+        long long reset_credits{};
+        bool has_reset_credits_expiry{};
+        long long reset_credits_expires_at{};
     };
 
     void RefreshIfNeeded();

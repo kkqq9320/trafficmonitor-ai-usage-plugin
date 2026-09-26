@@ -751,10 +751,29 @@ bool LoadMetricFromApiSection(const std::wstring& response_json, const wchar_t* 
     return true;
 }
 
+void LoadResetCredits(const std::wstring& json, CClaudeUsageData::Snapshot& snapshot)
+{
+    std::wstring credits_json;
+    double count{};
+    if (!TryGetJsonObject(json, L"reset_credits", credits_json) ||
+        !TryGetJsonDouble(credits_json, L"available_count", count) || !std::isfinite(count) || count < 0)
+        return;
+    snapshot.has_reset_credits = true;
+    snapshot.reset_credits = static_cast<long long>(count);
+
+    double expires_at{};
+    if (TryGetJsonDouble(credits_json, L"earliest_expires_at", expires_at) && std::isfinite(expires_at) && expires_at > 0)
+    {
+        snapshot.has_reset_credits_expiry = true;
+        snapshot.reset_credits_expires_at = static_cast<long long>(expires_at);
+    }
+}
+
 bool LoadSnapshotFromCachedJson(const std::wstring& json, CClaudeUsageData::Snapshot& snapshot)
 {
     const bool has_api_5h = LoadMetricFromApiSection(json, L"five_hour", snapshot.rolling_5h);
     const bool has_api_7d = LoadMetricFromApiSection(json, L"seven_day", snapshot.rolling_7d);
+    LoadResetCredits(json, snapshot);
     return has_api_5h || has_api_7d;
 }
 
@@ -792,6 +811,10 @@ bool TryLoadHelperUsageSnapshot(CClaudeUsageData::Snapshot& snapshot, bool requi
 
     snapshot.rolling_5h = cached_snapshot.rolling_5h;
     snapshot.rolling_7d = cached_snapshot.rolling_7d;
+    snapshot.has_reset_credits = cached_snapshot.has_reset_credits;
+    snapshot.reset_credits = cached_snapshot.reset_credits;
+    snapshot.has_reset_credits_expiry = cached_snapshot.has_reset_credits_expiry;
+    snapshot.reset_credits_expires_at = cached_snapshot.reset_credits_expires_at;
     snapshot.source_text = L"Claude web helper";
     snapshot.has_data_time = true;
     snapshot.data_at_unix = static_cast<long long>(last_write_time_ms / 1000ULL) - 11644473600LL;
@@ -1063,6 +1086,13 @@ void CClaudeUsageData::FinalizeSnapshot(Snapshot& snapshot)
     snapshot.tooltip_text += BuildMetricTooltip(L"5h", snapshot.rolling_5h);
     snapshot.tooltip_text += L"\n";
     snapshot.tooltip_text += BuildMetricTooltip(L"7d", snapshot.rolling_7d);
+    if (snapshot.has_reset_credits)
+    {
+        snapshot.tooltip_text += L"\nReset credits: " + std::to_wstring(snapshot.reset_credits);
+        std::wstring expiry_text;
+        if (snapshot.has_reset_credits_expiry && helper_support::UnixSecondsToLocalText(snapshot.reset_credits_expires_at, expiry_text))
+            snapshot.tooltip_text += L" (expires " + expiry_text + L")";
+    }
     if (snapshot.has_data_time)
     {
         snapshot.tooltip_text += L"\nUpdated " + helper_support::FormatAgeText(now_unix - snapshot.data_at_unix) + L", " + snapshot.source_text;

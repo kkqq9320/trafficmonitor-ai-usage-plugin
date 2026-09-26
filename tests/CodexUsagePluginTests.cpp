@@ -99,7 +99,7 @@ std::string HelperSnapshot(long long data_at, const std::string& seven_day, cons
 }
 
 // Same shape as the Claude web helper's claude-web-usage.json.
-std::string ClaudeSnapshot(int five_hour, int seven_day)
+std::string ClaudeSnapshot(int five_hour, int seven_day, const std::string& reset_credits = "null")
 {
     auto window = [](int utilization) {
         return R"({ "utilization": )" + std::to_string(utilization) +
@@ -109,7 +109,23 @@ std::string ClaudeSnapshot(int five_hour, int seven_day)
         R"(  "source": "claude-web-helper", "generated_at": ")" + IsoUtc(NowUnix()) + "\",\n" +
         R"(  "five_hour": )" + window(five_hour) + ",\n" +
         R"(  "seven_day": )" + window(seven_day) + ",\n" +
-        R"(  "seven_day_sonnet": null, "extra_usage": null, "refresh_ms": 300000)" + "\n}\n";
+        R"(  "seven_day_sonnet": null, "extra_usage": null, "refresh_ms": 300000,)" + "\n" +
+        R"(  "reset_credits": )" + reset_credits + "\n}\n";
+}
+
+std::wstring ClaudeTooltip(ITMPlugin* plugin)
+{
+    const std::wstring tooltip = plugin->GetTooltipInfo();
+    return tooltip.substr(0, tooltip.find(L"Codex usage"));
+}
+
+bool ExpectClaudeTooltip(ITMPlugin* plugin, const wchar_t* expected, bool present)
+{
+    const std::wstring tooltip = ClaudeTooltip(plugin);
+    if ((tooltip.find(expected) != std::wstring::npos) == present)
+        return true;
+    std::wcerr << L"Claude tooltip " << (present ? L"is missing" : L"unexpectedly contains") << L" \"" << expected << L"\":\n" << tooltip << L"\n";
+    return false;
 }
 
 struct Scenario
@@ -240,6 +256,8 @@ std::vector<Scenario> BuildScenarios()
             std::wcerr << L"Claude 5h before update: expected \"27%\", got \"" << before << L"\".\n";
             return false;
         }
+        if (!ExpectClaudeTooltip(plugin, L"Reset credits", false))
+            return false;
         WriteText(fixture.plugin_cache / L"claude-web-usage.json", ClaudeSnapshot(38, 19));
         Sleep(6000);
         plugin->DataRequired();
@@ -250,6 +268,21 @@ std::vector<Scenario> BuildScenarios()
             return false;
         }
         return true;
+    } });
+
+    // Usage-limit reset grants reported by claude.ai are listed in the Claude tooltip with their expiry.
+    scenarios.push_back(Scenario{ L"claude-reset-credits", [](const Fixture& fixture) {
+        WriteText(fixture.plugin_cache / L"claude-web-usage.json",
+            ClaudeSnapshot(72, 10, R"({ "available_count": 1, "earliest_expires_at": 1893456000 })"));
+    }, L"--", L"--", {}, {}, [](const Fixture&, ITMPlugin* plugin) {
+        return ExpectClaudeTooltip(plugin, L"Reset credits: 1 (expires ", true);
+    } });
+
+    scenarios.push_back(Scenario{ L"claude-reset-credits-no-expiry", [](const Fixture& fixture) {
+        WriteText(fixture.plugin_cache / L"claude-web-usage.json",
+            ClaudeSnapshot(72, 10, R"({ "available_count": 0, "earliest_expires_at": null })"));
+    }, L"--", L"--", {}, {}, [](const Fixture&, ITMPlugin* plugin) {
+        return ExpectClaudeTooltip(plugin, L"Reset credits: 0\n", true) && ExpectClaudeTooltip(plugin, L"Reset credits: 0 (", false);
     } });
 
     // A new snapshot that cannot be read yet (the file is held open) is read again on the next check.

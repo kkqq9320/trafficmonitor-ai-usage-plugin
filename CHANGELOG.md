@@ -8,6 +8,7 @@
 - `helper-config.json` for `node_path`, `claude_refresh_minutes`, `codex_server_refresh_minutes`, and `codex_path`.
 - Tooltips show data age, source, plan, and whether the Codex limit is reached. Stale values and values past their reset time are drawn dimmed.
 - The Codex tooltip lists free rate limit resets the account holds ("Reset credits: 1 (expires ...)"), taken from `rateLimitResetCredits` in `account/rateLimits/read` or `rate_limit_reset_credits` in `wham/usage`. The helper stores them as `reset_credits` in `codex-usage.json`.
+- The Claude tooltip lists the account's usage-limit reset grants the same way ("Reset credits: 1 (expires ...)"). The helper asks for them with `?cedar_ember=1` on the usage request it already makes, so no extra request is sent, and stores them as `reset_credits` in `claude-web-usage.json`. Neither helper ever uses a reset.
 - Regression tests for mtime-only updates, mixed limit ids, files over 32 MB, null windows, helper snapshots, and stale display; Node tests for both helpers; a Codex helper wrapper test.
 
 ### Changed

@@ -9,6 +9,7 @@ Claude usage limits:
 - The helper refreshes every 5 minutes by default (`claude_refresh_minutes`, minimum 1 minute) and honors `Retry-After` on HTTP 429
 - While Claude Code is in use, the helper refreshes sooner: it watches the transcript folder (`%USERPROFILE%\.claude\projects`, or `CLAUDE_CONFIG_DIR\projects`) and fetches 5 seconds after new activity, at most once a minute. It only notices that a `.jsonl` file changed; it never reads the transcripts. Rate limits and sign-in problems keep the regular schedule, and usage from claude.ai or the Claude app alone is picked up on the regular refresh
 - The plugin checks the snapshot's write time every 5 seconds and shows a new snapshot right away
+- The usage request carries `?cedar_ember=1`, which adds the account's usage-limit reset grants. The helper counts unpaused grants (`resets_left`, or 1 for a usable grant with none left) like the claude.ai settings page and stores `reset_credits = { available_count, earliest_expires_at }`; the tooltip shows `Reset credits: <count>` with the earliest expiry. Nothing is shown when the account is not eligible. The helper only reads grants and never uses a reset
 - A rate-limited or failed request keeps the last snapshot; the tooltip shows its age and the helper status
 - Snapshots older than two refresh intervals are drawn dimmed and marked stale; snapshots older than 30 minutes are dropped and Claude shows unavailable
 

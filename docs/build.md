@@ -41,7 +41,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-codex-window-
 Run the helper tests (Node.js 22+) and the Codex helper wrapper test:
 
 ```powershell
-node --test helper/codex-usage-helper/test/lib.test.mjs helper/codex-usage-helper/test/io.test.mjs helper/claude-web-helper/test/retry.test.mjs helper/claude-web-helper/test/activity.test.mjs
+node --test helper/codex-usage-helper/test/lib.test.mjs helper/codex-usage-helper/test/io.test.mjs helper/claude-web-helper/test/retry.test.mjs helper/claude-web-helper/test/activity.test.mjs helper/claude-web-helper/test/reset-credits.test.mjs
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-codex-usage-helper-wrapper.ps1
 ```
 
