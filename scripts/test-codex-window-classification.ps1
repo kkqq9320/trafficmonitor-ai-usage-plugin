@@ -48,6 +48,8 @@ $scenarios = @(
     'null-windows-newer',
     'large-file-tail',
     'helper-snapshot',
+    'helper-reset-credits',
+    'helper-reset-credits-no-expiry',
     'stale-helper-uses-newer-jsonl',
     'stale-and-reset-passed',
     'helper-snapshot-update',

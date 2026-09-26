@@ -7,6 +7,7 @@
 - The helper pushes new session JSONL rate-limit events immediately (file-system watcher) and asks the server every 15 minutes, after a known reset time, and when a session reports the usage limit, honoring HTTP 429 `Retry-After`.
 - `helper-config.json` for `node_path`, `claude_refresh_minutes`, `codex_server_refresh_minutes`, and `codex_path`.
 - Tooltips show data age, source, plan, and whether the Codex limit is reached. Stale values and values past their reset time are drawn dimmed.
+- The Codex tooltip lists free rate limit resets the account holds ("Reset credits: 1 (expires ...)"), taken from `rateLimitResetCredits` in `account/rateLimits/read` or `rate_limit_reset_credits` in `wham/usage`. The helper stores them as `reset_credits` in `codex-usage.json`.
 - Regression tests for mtime-only updates, mixed limit ids, files over 32 MB, null windows, helper snapshots, and stale display; Node tests for both helpers; a Codex helper wrapper test.
 
 ### Changed

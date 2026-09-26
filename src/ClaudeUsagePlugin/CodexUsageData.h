@@ -39,6 +39,11 @@ public:
         std::wstring plan_type;
         std::wstring reached_type;
         bool limit_reached{};
+        // Free rate limit resets the account holds (helper snapshot only).
+        bool has_reset_credits{};
+        long long reset_credits{};
+        bool has_reset_credits_expiry{};
+        long long reset_credits_expires_at{};
     };
 
     struct Snapshot

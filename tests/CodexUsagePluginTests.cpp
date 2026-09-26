@@ -84,7 +84,8 @@ void SetWriteTime(const fs::path& path, long long unix_seconds)
     CloseHandle(file);
 }
 
-std::string HelperSnapshot(long long data_at, const std::string& seven_day, const char* source, const char* method, const char* reached_type, bool limit_reached)
+std::string HelperSnapshot(long long data_at, const std::string& seven_day, const char* source, const char* method, const char* reached_type, bool limit_reached,
+    const std::string& reset_credits = "null")
 {
     return std::string("{\n") +
         R"(  "schema": 1, "limit_id": "codex", "source": ")" + source + R"(", "method": ")" + method + "\",\n" +
@@ -93,7 +94,8 @@ std::string HelperSnapshot(long long data_at, const std::string& seven_day, cons
         (reached_type ? std::string("\"") + reached_type + "\"" : std::string("null")) + ",\n" +
         R"(  "limit_reached": )" + (limit_reached ? "true" : "false") + ",\n" +
         R"(  "five_hour": null,)" + "\n" +
-        R"(  "seven_day": )" + seven_day + "\n}\n";
+        R"(  "seven_day": )" + seven_day + ",\n" +
+        R"(  "reset_credits": )" + reset_credits + "\n}\n";
 }
 
 // Same shape as the Claude web helper's claude-web-usage.json.
@@ -184,7 +186,20 @@ std::vector<Scenario> BuildScenarios()
         WriteText(fixture.sessions / L"rollout-old.jsonl", TokenCountAt(now - 24 * 3600, Weekly(89)));
         WriteText(fixture.plugin_cache / L"codex-usage.json",
             HelperSnapshot(now - 60, R"({ "used_percent": 100, "window_minutes": 10080, "resets_at": 1893456000 })", "server", "app-server", "rate_limit_reached", true));
-    }, L"--", L"100%", { L"Limit reached (rate_limit_reached)", L"server (app-server)", L"plan pro" }, { L"(stale)" }, nullptr });
+    }, L"--", L"100%", { L"Limit reached (rate_limit_reached)", L"server (app-server)", L"plan pro" }, { L"(stale)", L"Reset credits" }, nullptr });
+
+    // Free rate limit resets reported by the server are listed in the tooltip with their expiry.
+    scenarios.push_back(Scenario{ L"helper-reset-credits", [](const Fixture& fixture) {
+        WriteText(fixture.plugin_cache / L"codex-usage.json",
+            HelperSnapshot(NowUnix() - 60, R"({ "used_percent": 100, "window_minutes": 10080, "resets_at": 1893456000 })", "server", "app-server", "rate_limit_reached", true,
+                R"({ "available_count": 1, "earliest_expires_at": 1893456000 })"));
+    }, L"--", L"100%", { L"Reset credits: 1 (expires " }, {}, nullptr });
+
+    scenarios.push_back(Scenario{ L"helper-reset-credits-no-expiry", [](const Fixture& fixture) {
+        WriteText(fixture.plugin_cache / L"codex-usage.json",
+            HelperSnapshot(NowUnix() - 60, R"({ "used_percent": 40, "window_minutes": 10080, "resets_at": 1893456000 })", "server", "wham", nullptr, false,
+                R"({ "available_count": 2, "earliest_expires_at": null })"));
+    }, L"--", L"40%", { L"Reset credits: 2\n" }, { L"Reset credits: 2 (" }, nullptr });
 
     scenarios.push_back(Scenario{ L"stale-helper-uses-newer-jsonl", [](const Fixture& fixture) {
         const long long now = NowUnix();

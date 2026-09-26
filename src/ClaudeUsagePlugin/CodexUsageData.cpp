@@ -324,6 +324,15 @@ bool ParseHelperSnapshot(const std::string& json, RateLimitRecord& record)
     bool reported_reached = false;
     TryGetJsonBool(json, "limit_reached", reported_reached);
     record.limit_reached = ComputeLimitReached(record, reported_reached);
+
+    std::string credits_json;
+    if (TryGetJsonObject(json, "reset_credits", credits_json) &&
+        TryGetJsonInt64(credits_json, "available_count", record.reset_credits) && record.reset_credits >= 0)
+    {
+        record.has_reset_credits = true;
+        record.has_reset_credits_expiry =
+            TryGetJsonInt64(credits_json, "earliest_expires_at", record.reset_credits_expires_at) && record.reset_credits_expires_at > 0;
+    }
     record.valid = true;
     return true;
 }
@@ -863,6 +872,13 @@ CCodexUsageData::Snapshot CCodexUsageData::BuildSnapshot(const RateLimitRecord* 
             snapshot.tooltip_text += L"\nLimit reached";
             if (!record->reached_type.empty())
                 snapshot.tooltip_text += L" (" + record->reached_type + L")";
+        }
+        if (record->has_reset_credits)
+        {
+            snapshot.tooltip_text += L"\nReset credits: " + std::to_wstring(record->reset_credits);
+            std::wstring expiry_text;
+            if (record->has_reset_credits_expiry && helper_support::UnixSecondsToLocalText(record->reset_credits_expires_at, expiry_text))
+                snapshot.tooltip_text += L" (expires " + expiry_text + L")";
         }
         snapshot.tooltip_text += L"\n" + updated_line;
     }

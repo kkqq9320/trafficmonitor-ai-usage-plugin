@@ -90,6 +90,19 @@ export function normalizeReachedType(value) {
   return null;
 }
 
+// Free rate limit resets the account holds ("Full reset" credits). Returns
+// { available_count, earliest_expires_at } or null when the server does not report them.
+function toResetCredits(availableCount, credits) {
+  if (!isFiniteNumber(availableCount)) return null;
+  const expiries = (Array.isArray(credits) ? credits : [])
+    .filter((credit) => credit && credit.status === 'available' && isFiniteNumber(credit.expiresAt))
+    .map((credit) => Math.trunc(credit.expiresAt));
+  return {
+    available_count: Math.max(0, Math.trunc(availableCount)),
+    earliest_expires_at: expiries.length ? Math.min(...expiries) : null,
+  };
+}
+
 // account/rateLimits/read result -> normalized record. Only the "codex" limit bucket is used.
 export function normalizeAppServerRateLimits(result) {
   if (!result || typeof result !== 'object') throw new Error('Empty app-server rate limit result');
@@ -104,10 +117,12 @@ export function normalizeAppServerRateLimits(result) {
 
   const toWindow = (raw) => (raw ? makeWindow(raw.usedPercent, raw.windowDurationMins, raw.resetsAt) : null);
   const windows = assignWindows(toWindow(bucket.primary), toWindow(bucket.secondary));
+  const resetCredits = result.rateLimitResetCredits;
   return {
     ...windows,
     plan_type: typeof bucket.planType === 'string' ? bucket.planType : null,
     rate_limit_reached_type: normalizeReachedType(bucket.rateLimitReachedType),
+    reset_credits: resetCredits ? toResetCredits(resetCredits.availableCount, resetCredits.credits) : null,
   };
 }
 
@@ -126,7 +141,13 @@ export function normalizeWhamUsage(payload) {
   const windows = assignWindows(toWindow(rateLimit.primary_window), toWindow(rateLimit.secondary_window));
   let reachedType = normalizeReachedType(payload.rate_limit_reached_type);
   if (!reachedType && rateLimit.limit_reached === true) reachedType = 'rate_limit_reached';
-  return { ...windows, plan_type: payload.plan_type, rate_limit_reached_type: reachedType };
+  const resetCredits = payload.rate_limit_reset_credits;
+  return {
+    ...windows,
+    plan_type: payload.plan_type,
+    rate_limit_reached_type: reachedType,
+    reset_credits: resetCredits ? toResetCredits(resetCredits.available_count, null) : null,
+  };
 }
 
 // Returns a normalized record for a Codex token_count event of the "codex" bucket that carries
@@ -202,6 +223,8 @@ export function buildSnapshot(record, { source, method, dataAtMs, fetchedAtMs, p
     limit_reached: isLimitReached(record),
     five_hour: record.five_hour || null,
     seven_day: record.seven_day || null,
+    // Session events carry no reset credits (undefined): keep the last server value.
+    reset_credits: record.reset_credits !== undefined ? record.reset_credits : (previous && previous.reset_credits) || null,
   };
 }
 

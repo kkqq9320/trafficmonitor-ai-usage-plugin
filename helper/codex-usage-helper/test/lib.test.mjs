@@ -211,6 +211,54 @@ test('codex executable: config, then codex.exe on PATH, then newest Codex app ha
   );
 });
 
+test('rate limit reset credits (shape observed 2026-09-27) are counted with the earliest expiry', () => {
+  const codex = { limitId: 'codex', primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: 1790567129 }, secondary: null };
+  const record = lib.normalizeAppServerRateLimits({
+    rateLimits: codex,
+    rateLimitsByLimitId: { codex },
+    rateLimitResetCredits: {
+      availableCount: 2,
+      credits: [
+        { resetType: 'codexRateLimits', status: 'available', grantedAt: 1790109566, expiresAt: 1792701566, title: 'Full reset' },
+        { resetType: 'codexRateLimits', status: 'redeemed', grantedAt: 1780000000, expiresAt: 1782592000, title: 'Full reset' },
+        { resetType: 'codexRateLimits', status: 'available', grantedAt: 1790500000, expiresAt: 1793092000, title: 'Full reset' },
+      ],
+    },
+  });
+  assert.deepEqual(record.reset_credits, { available_count: 2, earliest_expires_at: 1792701566 }, 'expiry of the first available credit, not a used one');
+
+  const none = lib.normalizeAppServerRateLimits({ rateLimitsByLimitId: { codex } });
+  assert.equal(none.reset_credits, null, 'older Codex builds without the field report nothing');
+
+  const wham = lib.normalizeWhamUsage({
+    plan_type: 'pro',
+    rate_limit: { limit_reached: true, primary_window: { used_percent: 100, limit_window_seconds: 604800, reset_at: 1790567129 }, secondary_window: null },
+    rate_limit_reset_credits: { available_count: 1, applicable_available_count: 1 },
+  });
+  assert.deepEqual(wham.reset_credits, { available_count: 1, earliest_expires_at: null }, 'wham/usage has no expiry');
+});
+
+test('snapshot keeps the last known reset credits when a session event has none', () => {
+  const dataAtMs = Date.parse('2026-09-27T05:10:00Z');
+  const fromServer = lib.buildSnapshot(
+    { five_hour: null, seven_day: { used_percent: 100, window_minutes: 10080, resets_at: 1790567129 }, plan_type: 'pro', rate_limit_reached_type: null, reset_credits: { available_count: 1, earliest_expires_at: 1792701566 } },
+    { source: 'server', method: 'app-server', dataAtMs, fetchedAtMs: dataAtMs, previous: null },
+  );
+  assert.deepEqual(fromServer.reset_credits, { available_count: 1, earliest_expires_at: 1792701566 });
+
+  const fromSession = lib.buildSnapshot(
+    { five_hour: null, seven_day: { used_percent: 100, window_minutes: 10080, resets_at: 1790567129 }, plan_type: null, rate_limit_reached_type: null },
+    { source: 'jsonl', method: 'session-event', dataAtMs: dataAtMs + 1000, fetchedAtMs: dataAtMs + 1000, previous: fromServer },
+  );
+  assert.deepEqual(fromSession.reset_credits, { available_count: 1, earliest_expires_at: 1792701566 });
+
+  const serverWithout = lib.buildSnapshot(
+    { five_hour: null, seven_day: { used_percent: 10, window_minutes: 10080, resets_at: 1790567129 }, plan_type: 'pro', rate_limit_reached_type: null, reset_credits: null },
+    { source: 'server', method: 'app-server', dataAtMs: dataAtMs + 2000, fetchedAtMs: dataAtMs + 2000, previous: fromSession },
+  );
+  assert.equal(serverWithout.reset_credits, null, 'a server answer replaces the carried value');
+});
+
 test('snapshot records source, data time, plan and limit state', () => {
   const dataAtMs = Date.parse('2026-09-23T05:10:00Z');
   const snapshot = lib.buildSnapshot(
