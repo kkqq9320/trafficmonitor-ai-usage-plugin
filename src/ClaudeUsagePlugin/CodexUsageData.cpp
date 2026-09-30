@@ -928,7 +928,7 @@ CCodexUsageData::Snapshot CCodexUsageData::BuildSnapshot(const RateLimitRecord* 
             snapshot.tooltip_text += L"\nNo 5h/7d window reported";
             if (!credits_line.empty())
                 snapshot.tooltip_text += L"\n" + credits_line;
-            snapshot.tooltip_text += L"\n\n" + updated_line;
+            snapshot.tooltip_text += L"\n" + updated_line;
         }
         else if (!error_text.empty())
             snapshot.tooltip_text += L"\n" + error_text;
@@ -946,7 +946,7 @@ CCodexUsageData::Snapshot CCodexUsageData::BuildSnapshot(const RateLimitRecord* 
             if (!record->reached_type.empty())
                 snapshot.tooltip_text += L" (" + record->reached_type + L")";
         }
-        snapshot.tooltip_text += L"\n\n" + updated_line;
+        snapshot.tooltip_text += L"\n" + updated_line;
     }
 
     if (!helper_note.empty())

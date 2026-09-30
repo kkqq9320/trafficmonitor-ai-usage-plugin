@@ -1054,7 +1054,7 @@ void CClaudeUsageData::FinalizeSnapshot(Snapshot& snapshot)
         snapshot.tooltip_text += L"\n" + usage_tooltip::WindowLine(window, now_unix);
     if (snapshot.has_data_time)
     {
-        snapshot.tooltip_text += L"\n\nUpdated: " + helper_support::FormatAgeText(now_unix - snapshot.data_at_unix) + L", " + snapshot.source_text;
+        snapshot.tooltip_text += L"\nUpdated: " + helper_support::FormatAgeText(now_unix - snapshot.data_at_unix) + L", " + snapshot.source_text;
         if (!snapshot.plan.empty())
             snapshot.tooltip_text += L", Plan " + snapshot.plan;
         if (data_stale)

@@ -34,20 +34,19 @@ Codex usage limits:
 - The `codex` bucket also reports the Codex credits balance (`credits`: `has_credits`, `unlimited`, `balance`; the server sends `balance` as a string). Session events carry it too, so the balance follows each Codex turn; an event without it keeps the last value. The optional `Codex credits` item (`Xcr`) and the tooltip's `Credits:` line show the whole balance (`62,500`, `12.75`), `∞` when unlimited, `0` when the account has no credits, and `--` when the source reports none. The item is drawn dimmed with the other Codex values when the data is stale
 - Respects `CODEX_HOME` when it resolves to a Windows-readable path, including WSL-style `/mnt/c/...` paths
 
-Tooltip layout (one section per service, then the reset credits of both):
+Tooltip layout (a separator below TrafficMonitor's own lines, one section per service, then the reset credits of both):
 
 ```text
+-------
 📊 Claude left 5h 86% · 7d 17% · Fable 91%
 5h: 14% (3h 50m) at 2026-10-01 04:19 Thursday
 7d: 83% (2d 22h 30m) at 2026-10-03 22:59 Saturday
 Fable 7d: 9% (2d 22h 30m) at 2026-10-03 22:59 Saturday
-
 Updated: just now, Claude web helper, Plan Max (5x)
 
 📊 Codex left 7d 14%
 7d: 86% (3d 2h 50m) at 2026-10-04 03:19 Sunday
 Credits: 62,500
-
 Updated: 11m ago, Codex API, Plan Pro
 
 🎟 Reset Credits

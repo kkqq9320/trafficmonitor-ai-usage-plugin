@@ -283,7 +283,7 @@ std::vector<Scenario> BuildScenarios()
             WriteText(fixture.plugin_cache / L"codex-usage.json",
                 HelperSnapshot(NowUnix() - 60, R"({ "used_percent": 86, "window_minutes": 10080, "resets_at": 1893456000 })", "server", "app-server", nullptr, false,
                     R"({ "available_count": 2, "earliest_expires_at": null })", credits_json));
-        }, L"--", L"86%", { std::wstring(L"\n") + expected_line + L"\n\nUpdated: " }, {}, nullptr, expected_item, L"2" };
+        }, L"--", L"86%", { std::wstring(L"\n") + expected_line + L"\nUpdated: " }, {}, nullptr, expected_item, L"2" };
     };
     scenarios.push_back(helper_credits(L"helper-credits", R"({ "has_credits": true, "unlimited": false, "balance": 62500 })", L"62,500", L"Credits: 62,500"));
     scenarios.push_back(helper_credits(L"helper-credits-large", R"({ "has_credits": true, "unlimited": false, "balance": 1234567 })", L"1,234,567", L"Credits: 1,234,567"));
@@ -407,8 +407,8 @@ std::vector<Scenario> BuildScenarios()
         return true;
     } });
 
-    // Section layout: headers with the percentage left, one line per window with the used percentage,
-    // time left and reset time, then the update line with source and plan.
+    // Section layout: a separator from TrafficMonitor's own lines, headers with the percentage left, one
+    // line per window with the used percentage, time left and reset time, and the update line right below.
     scenarios.push_back(Scenario{ L"tooltip-layout", [](const Fixture& fixture) {
         WriteText(fixture.plugin_cache / L"claude-web-usage.json", ClaudeSnapshot(31, 45, "null",
             R"json("plan": "Max (5x)", "seven_day_models": [{ "name": "Fable", "utilization": 9, "resets_at": "2030-01-01T00:00:00.000000+00:00" }])json"));
@@ -416,14 +416,14 @@ std::vector<Scenario> BuildScenarios()
             HelperSnapshot(NowUnix() - 60, R"({ "used_percent": 86, "window_minutes": 10080, "resets_at": 1893456000 })", "server", "app-server", nullptr, false));
     }, L"--", L"86%", {
         std::wstring(CHART) + L" Codex left 7d 14%\n7d: 86% (",
-        L") at " + ResetTimeText(1893456000) + L"\n\nUpdated: 1m ago, Codex API, Plan Pro",
+        L") at " + ResetTimeText(1893456000) + L"\nUpdated: 1m ago, Codex API, Plan Pro",
     }, { L"Reset Credits" }, [](const Fixture&, ITMPlugin* plugin) {
         const std::wstring reset_at = L") at " + ResetTimeText(1893456000) + L"\n";
         return
-            ExpectClaudeTooltip(plugin, std::wstring(CHART) + L" Claude left " + Dotted(L"5h 69%", L"7d 55%") + L" " + DOT + L" Fable 91%\n5h: 31% (", true) &&
+            ExpectTooltip(plugin, std::wstring(L"-------\n") + CHART + L" Claude left " + Dotted(L"5h 69%", L"7d 55%") + L" " + DOT + L" Fable 91%\n5h: 31% (", true) &&
             ExpectClaudeTooltip(plugin, reset_at + L"7d: 45% (", true) &&
             ExpectClaudeTooltip(plugin, reset_at + L"Fable 7d: 9% (", true) &&
-            ExpectClaudeTooltip(plugin, reset_at + L"\nUpdated: just now, Claude web helper, Plan Max (5x)", true) &&
+            ExpectClaudeTooltip(plugin, reset_at + L"Updated: just now, Claude web helper, Plan Max (5x)", true) &&
             ExpectItem(plugin, ITEM_CLAUDE_5H, L"31%", L"Claude 5h") &&
             ExpectItem(plugin, ITEM_CLAUDE_7D, L"45%", L"Claude 7d") &&
             ExpectItem(plugin, ITEM_CLAUDE_FABLE_7D, L"9%", L"Claude Fable 7d");
@@ -556,6 +556,14 @@ int wmain(int argc, wchar_t* argv[])
         ExpectValue(plugin->GetItem(3), scenario->expected_7d, L"Codex 7d") &&
         ExpectValue(plugin->GetItem(ITEM_CODEX_CREDITS), scenario->expected_credits, L"Codex credits") &&
         ExpectValue(plugin->GetItem(ITEM_CODEX_RESETS), scenario->expected_codex_resets, L"Codex resets");
+
+    // TrafficMonitor puts its own lines above the plugin text; the separator marks where ours begin.
+    const std::wstring full_tooltip = plugin->GetTooltipInfo();
+    if (full_tooltip.compare(0, 8, L"-------\n") != 0)
+    {
+        std::wcerr << L"Tooltip does not start with the separator line:\n" << full_tooltip << L"\n";
+        passed = false;
+    }
 
     const std::wstring tooltip = CodexTooltip(plugin);
     for (const std::wstring& expected : scenario->tooltip_contains)

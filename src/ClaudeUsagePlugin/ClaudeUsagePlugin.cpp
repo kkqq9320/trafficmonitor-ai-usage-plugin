@@ -528,7 +528,8 @@ const wchar_t* CClaudeUsagePlugin::GetTooltipInfo()
     g_claude_usage_data.RefreshIfNeeded();
     g_codex_usage_data.RefreshIfNeeded();
 
-    m_tooltip_text_cache = g_claude_usage_data.GetTooltipText();
+    // TrafficMonitor lists its own traffic and system lines above the plugin text.
+    m_tooltip_text_cache = L"-------\n" + g_claude_usage_data.GetTooltipText();
     const std::wstring codex_tooltip = g_codex_usage_data.GetTooltipText();
     if (!m_tooltip_text_cache.empty() && !codex_tooltip.empty())
         m_tooltip_text_cache += L"\n\n";

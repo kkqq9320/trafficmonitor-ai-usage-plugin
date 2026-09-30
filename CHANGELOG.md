@@ -15,7 +15,7 @@
 - Regression tests for mtime-only updates, mixed limit ids, files over 32 MB, null windows, helper snapshots, and stale display; Node tests for both helpers; a Codex helper wrapper test.
 
 ### Changed
-- The tooltip has one section per service (`Claude left 5h 86% · 7d 17%` header; `7d: 83% (2d 22h 30m) at 2026-10-03 22:59 <weekday>` lines; `Updated: just now, Claude web helper, Plan Max (5x)`) and ends with a `Reset Credits` section listing both services.
+- The plugin text starts with a `-------` line below TrafficMonitor's own lines. The tooltip has one section per service (`Claude left 5h 86% · 7d 17%` header; `7d: 83% (2d 22h 30m) at 2026-10-03 22:59 <weekday>` lines; `Updated: just now, Claude web helper, Plan Max (5x)`) and ends with a `Reset Credits` section listing both services.
 - The plugin prefers the Codex helper snapshot and re-reads it only when its write time changes. Session JSONL is the fallback.
 - The Claude helper refreshes every 5 minutes by default instead of every 60 seconds, keeps the last snapshot on HTTP 429, and waits for `Retry-After`. The plugin accepts Claude snapshots up to 30 minutes old.
 - Both helpers run with a pinned Node.js (`node_path` or a standard install location) instead of the first `node` on PATH.
