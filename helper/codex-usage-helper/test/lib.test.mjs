@@ -259,6 +259,78 @@ test('snapshot keeps the last known reset credits when a session event has none'
   assert.equal(serverWithout.reset_credits, null, 'a server answer replaces the carried value');
 });
 
+test('Codex credits balance (shapes observed 2026-09-30) is read from all three sources', () => {
+  const credits = { has_credits: true, unlimited: false, balance: 62500 };
+  const codex = {
+    limitId: 'codex',
+    primary: { usedPercent: 86, windowDurationMins: 10080, resetsAt: 1791051599 },
+    secondary: null,
+    credits: { hasCredits: true, unlimited: false, balance: '62500' },
+  };
+  const appServer = lib.normalizeAppServerRateLimits({
+    rateLimits: { ...codex, limitId: 'codex_bengalfox', credits: { hasCredits: false, unlimited: false, balance: '1' } },
+    rateLimitsByLimitId: { codex },
+  });
+  assert.deepEqual(appServer.credits, credits, 'credits of the "codex" bucket, balance string as a number');
+  assert.equal(lib.normalizeAppServerRateLimits({ rateLimitsByLimitId: { codex: { ...codex, credits: null } } }).credits, null);
+
+  const wham = lib.normalizeWhamUsage({
+    plan_type: 'pro',
+    rate_limit: { limit_reached: false, primary_window: { used_percent: 86, limit_window_seconds: 604800, reset_at: 1791051599 }, secondary_window: null },
+    credits: { has_credits: true, unlimited: false, overage_limit_reached: false, balance: '62500', approx_local_messages: [15625, 81250] },
+  });
+  assert.deepEqual(wham.credits, credits);
+
+  const event = lib.parseRateLimitEventLine(tokenCountLine('2026-09-30T10:36:13.339Z', {
+    limit_id: 'codex', primary: { used_percent: 86, window_minutes: 10080, resets_at: 1791051599 }, secondary: null,
+    credits: { has_credits: true, unlimited: false, balance: '62500' },
+  }));
+  assert.deepEqual(event.credits, credits);
+
+  const withoutCredits = lib.parseRateLimitEventLine(tokenCountLine('2026-09-30T10:36:13.339Z', {
+    limit_id: 'codex', primary: { used_percent: 86, window_minutes: 10080, resets_at: 1791051599 }, secondary: null, credits: null,
+  }));
+  assert.equal(withoutCredits.credits, undefined, 'a session event without credits leaves the last value in place');
+
+  assert.deepEqual(
+    lib.normalizeWhamUsage({ plan_type: 'pro', rate_limit: {}, credits: { has_credits: false, unlimited: true, balance: null } }).credits,
+    { has_credits: false, unlimited: true, balance: null },
+  );
+  assert.equal(
+    lib.normalizeWhamUsage({ plan_type: 'pro', rate_limit: {}, credits: { has_credits: true, balance: 'n/a' } }).credits.balance,
+    null,
+    'a balance that is not a number is dropped',
+  );
+});
+
+test('snapshot keeps the last known credits when a session event has none', () => {
+  const dataAtMs = Date.parse('2026-09-30T10:00:00Z');
+  const weekly = { used_percent: 86, window_minutes: 10080, resets_at: 1791051599 };
+  const fromServer = lib.buildSnapshot(
+    { five_hour: null, seven_day: weekly, plan_type: 'pro', rate_limit_reached_type: null, credits: { has_credits: true, unlimited: false, balance: 62500 } },
+    { source: 'server', method: 'app-server', dataAtMs, fetchedAtMs: dataAtMs, previous: null },
+  );
+  assert.deepEqual(fromServer.credits, { has_credits: true, unlimited: false, balance: 62500 });
+
+  const spent = lib.buildSnapshot(
+    { five_hour: null, seven_day: weekly, plan_type: 'pro', rate_limit_reached_type: null, credits: { has_credits: true, unlimited: false, balance: 62480 } },
+    { source: 'jsonl', method: 'session-event', dataAtMs: dataAtMs + 1000, fetchedAtMs: dataAtMs + 1000, previous: fromServer },
+  );
+  assert.equal(spent.credits.balance, 62480, 'session events update the balance');
+
+  const silent = lib.buildSnapshot(
+    { five_hour: null, seven_day: weekly, plan_type: 'pro', rate_limit_reached_type: null },
+    { source: 'jsonl', method: 'session-event', dataAtMs: dataAtMs + 2000, fetchedAtMs: dataAtMs + 2000, previous: spent },
+  );
+  assert.equal(silent.credits.balance, 62480);
+
+  const serverWithout = lib.buildSnapshot(
+    { five_hour: null, seven_day: weekly, plan_type: 'pro', rate_limit_reached_type: null, credits: null },
+    { source: 'server', method: 'app-server', dataAtMs: dataAtMs + 3000, fetchedAtMs: dataAtMs + 3000, previous: silent },
+  );
+  assert.equal(serverWithout.credits, null, 'a server answer replaces the carried value');
+});
+
 test('snapshot records source, data time, plan and limit state', () => {
   const dataAtMs = Date.parse('2026-09-23T05:10:00Z');
   const snapshot = lib.buildSnapshot(

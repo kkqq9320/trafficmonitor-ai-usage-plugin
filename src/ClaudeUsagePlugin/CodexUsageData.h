@@ -44,12 +44,26 @@ public:
         long long reset_credits{};
         bool has_reset_credits_expiry{};
         long long reset_credits_expires_at{};
+        // Codex credits balance spent on usage beyond the plan limits.
+        bool has_credits_info{};
+        bool has_credits{};
+        bool credits_unlimited{};
+        bool has_credits_balance{};
+        double credits_balance{};
+    };
+
+    struct Credits
+    {
+        bool available{};
+        bool stale{};
+        std::wstring value_text{ L"--" };
     };
 
     struct Snapshot
     {
         Metric rolling_5h;
         Metric rolling_7d;
+        Credits credits;
         std::wstring value_5h_text{ L"--" };
         std::wstring value_7d_text{ L"--" };
         std::wstring tooltip_text{ L"Codex usage limits unavailable" };
@@ -62,6 +76,7 @@ public:
     void AutoStartBundledHelperIfNeeded();
     const std::wstring& GetValueText(CodexUsageWindow window) const;
     const Metric& GetMetric(CodexUsageWindow window) const;
+    const Credits& GetCredits() const;
     const std::wstring& GetTooltipText() const;
 
 private:

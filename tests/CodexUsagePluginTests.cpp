@@ -85,7 +85,7 @@ void SetWriteTime(const fs::path& path, long long unix_seconds)
 }
 
 std::string HelperSnapshot(long long data_at, const std::string& seven_day, const char* source, const char* method, const char* reached_type, bool limit_reached,
-    const std::string& reset_credits = "null")
+    const std::string& reset_credits = "null", const std::string& credits = "null")
 {
     return std::string("{\n") +
         R"(  "schema": 1, "limit_id": "codex", "source": ")" + source + R"(", "method": ")" + method + "\",\n" +
@@ -95,7 +95,8 @@ std::string HelperSnapshot(long long data_at, const std::string& seven_day, cons
         R"(  "limit_reached": )" + (limit_reached ? "true" : "false") + ",\n" +
         R"(  "five_hour": null,)" + "\n" +
         R"(  "seven_day": )" + seven_day + ",\n" +
-        R"(  "reset_credits": )" + reset_credits + "\n}\n";
+        R"(  "reset_credits": )" + reset_credits + ",\n" +
+        R"(  "credits": )" + credits + "\n}\n";
 }
 
 // Same shape as the Claude web helper's claude-web-usage.json.
@@ -137,9 +138,11 @@ struct Scenario
     std::vector<std::wstring> tooltip_contains;
     std::vector<std::wstring> tooltip_excludes;
     std::function<bool(const Fixture&, ITMPlugin*)> after;  // optional follow-up checks
+    const wchar_t* expected_credits = L"--";
 };
 
 const char* LEGACY_TIMESTAMP = "2026-07-27T08:12:08Z";
+const wchar_t INFINITY_TEXT[] = { 0x221E, 0 };
 
 std::vector<Scenario> BuildScenarios()
 {
@@ -202,7 +205,7 @@ std::vector<Scenario> BuildScenarios()
         WriteText(fixture.sessions / L"rollout-old.jsonl", TokenCountAt(now - 24 * 3600, Weekly(89)));
         WriteText(fixture.plugin_cache / L"codex-usage.json",
             HelperSnapshot(now - 60, R"({ "used_percent": 100, "window_minutes": 10080, "resets_at": 1893456000 })", "server", "app-server", "rate_limit_reached", true));
-    }, L"--", L"100%", { L"Limit reached (rate_limit_reached)", L"server (app-server)", L"plan pro" }, { L"(stale)", L"Reset credits" }, nullptr });
+    }, L"--", L"100%", { L"Limit reached (rate_limit_reached)", L"server (app-server)", L"plan pro" }, { L"(stale)", L"Reset credits", L"\nCredits" }, nullptr });
 
     // Free rate limit resets reported by the server are listed in the tooltip with their expiry.
     scenarios.push_back(Scenario{ L"helper-reset-credits", [](const Fixture& fixture) {
@@ -216,6 +219,26 @@ std::vector<Scenario> BuildScenarios()
             HelperSnapshot(NowUnix() - 60, R"({ "used_percent": 40, "window_minutes": 10080, "resets_at": 1893456000 })", "server", "wham", nullptr, false,
                 R"({ "available_count": 2, "earliest_expires_at": null })"));
     }, L"--", L"40%", { L"Reset credits: 2\n" }, { L"Reset credits: 2 (" }, nullptr });
+
+    // The credits balance gets its own taskbar item (shortened) and an exact tooltip line.
+    auto helper_credits = [](const wchar_t* name, const char* credits, const wchar_t* expected_item, const wchar_t* expected_line) {
+        const std::string credits_json = credits;
+        return Scenario{ name, [credits_json](const Fixture& fixture) {
+            WriteText(fixture.plugin_cache / L"codex-usage.json",
+                HelperSnapshot(NowUnix() - 60, R"({ "used_percent": 86, "window_minutes": 10080, "resets_at": 1893456000 })", "server", "app-server", nullptr, false,
+                    R"({ "available_count": 2, "earliest_expires_at": null })", credits_json));
+        }, L"--", L"86%", { std::wstring(L"Reset credits: 2\n") + expected_line + L"\n" }, {}, nullptr, expected_item };
+    };
+    scenarios.push_back(helper_credits(L"helper-credits", R"({ "has_credits": true, "unlimited": false, "balance": 62500 })", L"62.5K", L"Credits: 62,500"));
+    scenarios.push_back(helper_credits(L"helper-credits-large", R"({ "has_credits": true, "unlimited": false, "balance": 1234567 })", L"1.2M", L"Credits: 1,234,567"));
+    scenarios.push_back(helper_credits(L"helper-credits-unlimited", R"({ "has_credits": true, "unlimited": true, "balance": null })", INFINITY_TEXT, L"Credits: unlimited"));
+    scenarios.push_back(helper_credits(L"helper-credits-none", R"({ "has_credits": false, "unlimited": false, "balance": null })", L"0", L"Credits: 0"));
+
+    // Without a fresh helper the DLL reads the balance (a string) from the session event itself.
+    scenarios.push_back(Scenario{ L"jsonl-credits", [](const Fixture& fixture) {
+        WriteText(fixture.sessions / L"rollout-credits.jsonl", TokenCountAt(NowUnix() - 5 * 60,
+            R"({"limit_id":"codex","primary":{"used_percent":86,"window_minutes":10080,"resets_at":1893456000},"secondary":null,"credits":{"has_credits":true,"unlimited":false,"balance":"12.75"}})"));
+    }, L"--", L"86%", { L"\nCredits: 12.75\n" }, {}, nullptr, L"12.7" });
 
     scenarios.push_back(Scenario{ L"stale-helper-uses-newer-jsonl", [](const Fixture& fixture) {
         const long long now = NowUnix();
@@ -370,7 +393,8 @@ int wmain(int argc, wchar_t* argv[])
         if (plugin == nullptr)
             return 2;
         plugin->DataRequired();
-        std::wcout << L"X5h=" << plugin->GetItem(2)->GetItemValueText() << L" X7d=" << plugin->GetItem(3)->GetItemValueText() << L"\n";
+        std::wcout << L"X5h=" << plugin->GetItem(2)->GetItemValueText() << L" X7d=" << plugin->GetItem(3)->GetItemValueText()
+            << L" Xcr=" << plugin->GetItem(4)->GetItemValueText() << L"\n";
         std::wcout << plugin->GetTooltipInfo() << L"\n";
         return 0;
     }
@@ -421,7 +445,8 @@ int wmain(int argc, wchar_t* argv[])
 
     bool passed =
         ExpectValue(plugin->GetItem(2), scenario->expected_5h, L"Codex 5h") &&
-        ExpectValue(plugin->GetItem(3), scenario->expected_7d, L"Codex 7d");
+        ExpectValue(plugin->GetItem(3), scenario->expected_7d, L"Codex 7d") &&
+        ExpectValue(plugin->GetItem(4), scenario->expected_credits, L"Codex credits");
 
     const std::wstring tooltip = CodexTooltip(plugin);
     for (const std::wstring& expected : scenario->tooltip_contains)

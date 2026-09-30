@@ -103,6 +103,19 @@ function toResetCredits(availableCount, credits) {
   };
 }
 
+// Codex credits spent on usage beyond the plan limits. The server sends the balance as a string
+// and uses camelCase (app-server) or snake_case (wham/usage, session JSONL) keys.
+// Returns { has_credits, unlimited, balance } or null when the server does not report them.
+function toCredits(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const balance = typeof raw.balance === 'string' && raw.balance.trim() !== '' ? Number(raw.balance) : raw.balance;
+  return {
+    has_credits: (raw.has_credits ?? raw.hasCredits) === true,
+    unlimited: raw.unlimited === true,
+    balance: isFiniteNumber(balance) ? balance : null,
+  };
+}
+
 // account/rateLimits/read result -> normalized record. Only the "codex" limit bucket is used.
 export function normalizeAppServerRateLimits(result) {
   if (!result || typeof result !== 'object') throw new Error('Empty app-server rate limit result');
@@ -123,6 +136,7 @@ export function normalizeAppServerRateLimits(result) {
     plan_type: typeof bucket.planType === 'string' ? bucket.planType : null,
     rate_limit_reached_type: normalizeReachedType(bucket.rateLimitReachedType),
     reset_credits: resetCredits ? toResetCredits(resetCredits.availableCount, resetCredits.credits) : null,
+    credits: toCredits(bucket.credits),
   };
 }
 
@@ -147,6 +161,7 @@ export function normalizeWhamUsage(payload) {
     plan_type: payload.plan_type,
     rate_limit_reached_type: reachedType,
     reset_credits: resetCredits ? toResetCredits(resetCredits.available_count, null) : null,
+    credits: toCredits(payload.credits),
   };
 }
 
@@ -182,6 +197,8 @@ export function parseRateLimitEventLine(line) {
     ...windows,
     plan_type: typeof limits.plan_type === 'string' ? limits.plan_type : null,
     rate_limit_reached_type: normalizeReachedType(limits.rate_limit_reached_type),
+    // Events without credits (undefined) keep the last known value in the snapshot.
+    credits: toCredits(limits.credits) || undefined,
     timestampMs,
   };
 }
@@ -225,6 +242,7 @@ export function buildSnapshot(record, { source, method, dataAtMs, fetchedAtMs, p
     seven_day: record.seven_day || null,
     // Session events carry no reset credits (undefined): keep the last server value.
     reset_credits: record.reset_credits !== undefined ? record.reset_credits : (previous && previous.reset_credits) || null,
+    credits: record.credits !== undefined ? record.credits : (previous && previous.credits) || null,
   };
 }
 

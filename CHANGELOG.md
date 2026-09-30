@@ -9,6 +9,7 @@
 - Tooltips show data age, source, plan, and whether the Codex limit is reached. Stale values and values past their reset time are drawn dimmed.
 - The Codex tooltip lists free rate limit resets the account holds ("Reset credits: 1 (expires ...)"), taken from `rateLimitResetCredits` in `account/rateLimits/read` or `rate_limit_reset_credits` in `wham/usage`. The helper stores them as `reset_credits` in `codex-usage.json`.
 - The Claude tooltip lists the account's usage-limit reset grants the same way ("Reset credits: 1 (expires ...)"). The helper asks for them with `?cedar_ember=1` on the usage request it already makes, so no extra request is sent, and stores them as `reset_credits` in `claude-web-usage.json`. Neither helper ever uses a reset.
+- `Codex credits` taskbar item (`Xcr`) and a `Credits: 62,500` Codex tooltip line for the Codex credits balance, read from the `codex` bucket's `credits` in `account/rateLimits/read`, `wham/usage`, and session JSONL. The helper stores it as `credits` in `codex-usage.json`.
 - Regression tests for mtime-only updates, mixed limit ids, files over 32 MB, null windows, helper snapshots, and stale display; Node tests for both helpers; a Codex helper wrapper test.
 
 ### Changed

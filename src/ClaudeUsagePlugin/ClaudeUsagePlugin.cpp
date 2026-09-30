@@ -75,6 +75,13 @@ DrawColors GetCodexDrawColors(CodexUsageWindow window, bool dark_mode)
         : DrawColors{ RGB(96, 150, 110), RGB(232, 238, 234), RGB(178, 194, 184), RGB(54, 62, 76) };
 }
 
+DrawColors GetCodexCreditsDrawColors(bool dark_mode)
+{
+    return dark_mode
+        ? DrawColors{ RGB(214, 162, 58), RGB(58, 50, 36), RGB(104, 92, 70), RGB(226, 230, 236) }
+        : DrawColors{ RGB(178, 124, 18), RGB(244, 236, 220), RGB(200, 188, 164), RGB(54, 62, 76) };
+}
+
 void DrawUsageItemBar(
     CDC* pDC,
     const DrawColors& colors,
@@ -86,7 +93,8 @@ void DrawUsageItemBar(
     int x,
     int y,
     int w,
-    int h)
+    int h,
+    bool with_bar = true)
 {
     if (pDC == nullptr || label_text == nullptr || value_text == nullptr || value_sample_text == nullptr || w <= 0 || h <= 0)
         return;
@@ -112,7 +120,7 @@ void DrawUsageItemBar(
     int value_left = content_right - value_width;
     int bar_left = content_left + label_width + gap;
     int bar_right = value_left - gap;
-    bool draw_bar = bar_right - bar_left >= bar_min_width;
+    bool draw_bar = with_bar && bar_right - bar_left >= bar_min_width;
 
     if (!draw_bar)
     {
@@ -298,6 +306,67 @@ void CCodexUsageItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark_
     DrawUsageItemBar(pDC, colors, GetItemLableText(), value_text.c_str(), GetItemValueSampleText(), metric.available && !metric.stale, GetUsageRatio(metric), x, y, w, h);
 }
 
+const wchar_t* CCodexCreditsItem::GetItemName() const
+{
+    return L"Codex credits";
+}
+
+const wchar_t* CCodexCreditsItem::GetItemId() const
+{
+    return L"CodexCredits";
+}
+
+const wchar_t* CCodexCreditsItem::GetItemLableText() const
+{
+    return L"Xcr";
+}
+
+const wchar_t* CCodexCreditsItem::GetItemValueText() const
+{
+    m_value_text_cache = g_codex_usage_data.GetCredits().value_text;
+    return m_value_text_cache.c_str();
+}
+
+const wchar_t* CCodexCreditsItem::GetItemValueSampleText() const
+{
+    return L"99.9K";
+}
+
+bool CCodexCreditsItem::IsCustomDraw() const
+{
+    return true;
+}
+
+int CCodexCreditsItem::GetItemWidth() const
+{
+    return 64;
+}
+
+int CCodexCreditsItem::GetItemWidthEx(void* hDC) const
+{
+    CDC* pDC = CDC::FromHandle(static_cast<HDC>(hDC));
+    if (pDC == nullptr)
+        return GetItemWidth();
+
+    const int padding = 4;
+    const int gap = 4;
+    const int accent_width = 3;
+    const int label_width = MeasureTextWidth(pDC, GetItemLableText());
+    const int value_width = MeasureTextWidth(pDC, GetItemValueSampleText());
+    return padding * 2 + accent_width + gap + label_width + gap + value_width;
+}
+
+void CCodexCreditsItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode)
+{
+    CDC* pDC = CDC::FromHandle(static_cast<HDC>(hDC));
+    if (pDC == nullptr || w <= 0 || h <= 0)
+        return;
+
+    const CCodexUsageData::Credits credits = g_codex_usage_data.GetCredits();
+    DrawUsageItemBar(pDC, GetCodexCreditsDrawColors(dark_mode), GetItemLableText(), credits.value_text.c_str(), GetItemValueSampleText(),
+        credits.available && !credits.stale, 0.0f, x, y, w, h, false);
+}
+
 CClaudeUsagePlugin& CClaudeUsagePlugin::Instance()
 {
     static CClaudeUsagePlugin instance;
@@ -316,6 +385,8 @@ IPluginItem* CClaudeUsagePlugin::GetItem(int index)
         return &m_codex_five_hour_item;
     case 3:
         return &m_codex_seven_day_item;
+    case 4:
+        return &m_codex_credits_item;
     default:
         return nullptr;
     }

@@ -30,6 +30,7 @@ Codex usage limits:
 - Classifies a 300-minute window (±1) as `X5h` and a 10080-minute window (±1) as `X7d` regardless of `primary` / `secondary` position; the legacy mapping is used only when `window_minutes` is absent
 - The tooltip shows data age, source, plan and whether the limit is reached. Values older than 30 minutes, or whose reset time has passed, are drawn dimmed and marked in the tooltip
 - When the server reports free rate limit resets, the tooltip adds `Reset credits: <count>` with the earliest expiry (the app-server reports expiry; `wham/usage` reports only the count). Session JSONL has no reset credits, so the last server value is kept
+- The `codex` bucket also reports the Codex credits balance (`credits`: `has_credits`, `unlimited`, `balance`; the server sends `balance` as a string). Session events carry it too, so the balance follows each Codex turn; an event without it keeps the last value. The optional `Codex credits` item (`Xcr`) shows the balance shortened and cut rather than rounded (`12.7`, `62.5K`, `1.2M`), `∞` when unlimited, `0` when the account has no credits, and `--` when the source reports none. The tooltip adds `Credits: <exact balance>`, and the item is drawn dimmed with the other Codex values when the data is stale
 - Respects `CODEX_HOME` when it resolves to a Windows-readable path, including WSL-style `/mnt/c/...` paths
 
 ## Helper Settings
@@ -115,7 +116,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\claude-web-helper.ps1 watch
 
 Files under `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\`:
 
-- Usage snapshot: `codex-usage.json` (`source`, `method`, `data_at`, `plan_type`, `rate_limit_reached_type`, `limit_reached`, `five_hour`, `seven_day`, `reset_credits` = `{ available_count, earliest_expires_at }` or null)
+- Usage snapshot: `codex-usage.json` (`source`, `method`, `data_at`, `plan_type`, `rate_limit_reached_type`, `limit_reached`, `five_hour`, `seven_day`, `reset_credits` = `{ available_count, earliest_expires_at }` or null, `credits` = `{ has_credits, unlimited, balance }` with a numeric or null `balance`, or null)
 - Helper status: `codex-usage-helper-status.json` (server attempts, next request time, `Retry-After`, last error)
 - Watch lock: `codex-usage-helper-watch.lock`
 

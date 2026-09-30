@@ -44,6 +44,24 @@ private:
     mutable std::wstring m_value_text_cache;
 };
 
+// Codex credits balance: label and value only, since a balance has no maximum to draw a bar against.
+class CCodexCreditsItem : public IPluginItem
+{
+public:
+    const wchar_t* GetItemName() const override;
+    const wchar_t* GetItemId() const override;
+    const wchar_t* GetItemLableText() const override;
+    const wchar_t* GetItemValueText() const override;
+    const wchar_t* GetItemValueSampleText() const override;
+    bool IsCustomDraw() const override;
+    int GetItemWidth() const override;
+    int GetItemWidthEx(void* hDC) const override;
+    void DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode) override;
+
+private:
+    mutable std::wstring m_value_text_cache;
+};
+
 class CClaudeUsagePlugin : public ITMPlugin
 {
 private:
@@ -63,6 +81,7 @@ private:
     CClaudeUsageItem m_seven_day_item{ ClaudeUsageWindow::Rolling7Days };
     CCodexUsageItem m_codex_five_hour_item{ CodexUsageWindow::Rolling5Hours };
     CCodexUsageItem m_codex_seven_day_item{ CodexUsageWindow::Rolling7Days };
+    CCodexCreditsItem m_codex_credits_item;
     std::wstring m_tooltip_text_cache;
 };
 
