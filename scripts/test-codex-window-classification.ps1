@@ -54,6 +54,8 @@ $scenarios = @(
     'helper-credits-large',
     'helper-credits-unlimited',
     'helper-credits-none',
+    'helper-credits-absurd',
+    'helper-credits-no-window',
     'jsonl-credits',
     'stale-helper-uses-newer-jsonl',
     'stale-and-reset-passed',

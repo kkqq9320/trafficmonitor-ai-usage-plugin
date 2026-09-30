@@ -234,6 +234,20 @@ std::vector<Scenario> BuildScenarios()
     scenarios.push_back(helper_credits(L"helper-credits-unlimited", R"({ "has_credits": true, "unlimited": true, "balance": null })", INFINITY_TEXT, L"Credits: unlimited"));
     scenarios.push_back(helper_credits(L"helper-credits-none", R"({ "has_credits": false, "unlimited": false, "balance": null })", L"0", L"Credits: 0"));
 
+    // A nonsensical balance is ignored instead of overflowing the formatting buffers.
+    scenarios.push_back(Scenario{ L"helper-credits-absurd", [](const Fixture& fixture) {
+        WriteText(fixture.plugin_cache / L"codex-usage.json",
+            HelperSnapshot(NowUnix() - 60, R"({ "used_percent": 86, "window_minutes": 10080, "resets_at": 1893456000 })", "server", "app-server", nullptr, false,
+                "null", R"({ "has_credits": true, "unlimited": false, "balance": 1e300 })"));
+    }, L"--", L"86%", {}, { L"\nCredits" }, nullptr, L"--" });
+
+    // With no 5h/7d window the tooltip still explains the credits item.
+    scenarios.push_back(Scenario{ L"helper-credits-no-window", [](const Fixture& fixture) {
+        WriteText(fixture.plugin_cache / L"codex-usage.json",
+            HelperSnapshot(NowUnix() - 60, "null", "server", "wham", nullptr, false,
+                "null", R"({ "has_credits": true, "unlimited": false, "balance": 62500 })"));
+    }, L"--", L"--", { L"Codex usage limits unavailable", L"\nCredits: 62,500" }, {}, nullptr, L"62.5K" });
+
     // Without a fresh helper the DLL reads the balance (a string) from the session event itself.
     scenarios.push_back(Scenario{ L"jsonl-credits", [](const Fixture& fixture) {
         WriteText(fixture.sessions / L"rollout-credits.jsonl", TokenCountAt(NowUnix() - 5 * 60,

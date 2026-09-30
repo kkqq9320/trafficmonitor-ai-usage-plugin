@@ -29,6 +29,7 @@ constexpr size_t JSONL_SCAN_MAX_FILES = 32;
 constexpr long long FIVE_HOUR_WINDOW_MINUTES = 300LL;
 constexpr long long SEVEN_DAY_WINDOW_MINUTES = 10080LL;
 constexpr long long WINDOW_TOLERANCE_MINUTES = 1LL;
+constexpr double MAX_CREDITS_BALANCE = 1e15;
 constexpr char CODEX_LIMIT_ID[] = "codex";
 constexpr wchar_t SNAPSHOT_FILE_NAME[] = L"codex-usage.json";
 constexpr wchar_t STATUS_FILE_NAME[] = L"codex-usage-helper-status.json";
@@ -299,6 +300,9 @@ void LoadCredits(const std::string& parent_json, RateLimitRecord& record)
         if (end_ptr != balance_text.c_str() + balance_text.size() || !std::isfinite(balance))
             return;
     }
+    // No real balance comes near this; larger values would also overflow the formatting buffers.
+    if (std::fabs(balance) >= MAX_CREDITS_BALANCE)
+        return;
     record.has_credits_balance = true;
     record.credits_balance = balance;
 }
@@ -958,7 +962,11 @@ CCodexUsageData::Snapshot CCodexUsageData::BuildSnapshot(const RateLimitRecord* 
     {
         snapshot.tooltip_text = L"Codex usage limits unavailable";
         if (has_record)
+        {
+            if (!credits_line.empty())
+                snapshot.tooltip_text += L"\n" + credits_line;
             snapshot.tooltip_text += L"\nNo 5h/7d window reported. " + updated_line;
+        }
         else if (!error_text.empty())
             snapshot.tooltip_text += L"\n" + error_text;
     }
