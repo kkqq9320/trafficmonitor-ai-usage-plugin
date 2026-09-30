@@ -60,6 +60,8 @@ $scenarios = @(
     'stale-helper-uses-newer-jsonl',
     'stale-and-reset-passed',
     'helper-snapshot-update',
+    'tooltip-layout',
+    'tooltip-codex-both-windows',
     'claude-snapshot-update',
     'claude-reset-credits',
     'claude-reset-credits-no-expiry',

@@ -54,7 +54,7 @@ TrafficMonitor
 ```
 
 4. TrafficMonitor를 재시작합니다.
-5. TrafficMonitor의 작업 표시줄 표시 설정에서 `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`를 활성화합니다. 크레딧 잔액도 보려면 `Codex credits`를 함께 켭니다.
+5. TrafficMonitor의 작업 표시줄 표시 설정에서 `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`를 활성화합니다. 필요하면 선택 항목 `Claude Fable 7d`, `Codex credits`, `Claude resets`, `Codex resets`도 켭니다.
 6. Claude 값을 실시간으로 보려면 최초 1회 Claude 로그인을 실행합니다.
 
 ```powershell
@@ -74,7 +74,7 @@ helper 파일이 `plugins\ClaudeUsagePlugin` 아래에 있으면, 최초 로그�
 - `5h` = 현재 5시간 한도 구간
 - `7d` = 현재 7일 한도 구간
 - `C5h`, `C7d`, `X5h`, `X7d`는 사용률 퍼센트를 표시
-- `Xcr`(선택 항목 `Codex credits`)는 Codex 크레딧 잔액을 `62.5K`처럼 줄여 표시하고, 툴팁에는 정확한 잔액이 나옴. 자세한 내용은 [docs/runtime.md](docs/runtime.md#runtime-model) 참조
+- 선택 항목: `CF7d`(`Claude Fable 7d`)는 Fable 주간 한도, `Xcr`(`Codex credits`)는 Codex 크레딧 잔액, `Crs`·`Xrs`(`Claude resets`·`Codex resets`)는 계정별 사용량 초기화권 개수를 표시. 자세한 내용은 [docs/runtime.md](docs/runtime.md#runtime-model) 참조
 - 툴팁에는 동일한 사용률이 표시되며, 초기화 정보가 있을 때는 초기화 시간도 함께 표시됨
 - Codex 로컬 데이터가 남은 퍼센트를 제공하면 플러그인이 표시 전에 사용률로 변환
 

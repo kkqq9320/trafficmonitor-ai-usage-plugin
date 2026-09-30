@@ -13,6 +13,12 @@ struct DrawColors
 
 DrawColors GetDrawColors(ClaudeUsageWindow window, bool dark_mode)
 {
+    if (window == ClaudeUsageWindow::Fable7Days)
+    {
+        return dark_mode
+            ? DrawColors{ RGB(156, 122, 226), RGB(50, 42, 68), RGB(84, 72, 110), RGB(226, 228, 240) }
+            : DrawColors{ RGB(118, 82, 196), RGB(236, 230, 248), RGB(190, 178, 214), RGB(54, 62, 76) };
+    }
     if (window == ClaudeUsageWindow::Rolling5Hours)
     {
         return dark_mode
@@ -175,17 +181,17 @@ CClaudeUsageItem::CClaudeUsageItem(ClaudeUsageWindow window)
 
 const wchar_t* CClaudeUsageItem::GetItemName() const
 {
-    return (m_window == ClaudeUsageWindow::Rolling5Hours ? L"Claude 5h" : L"Claude 7d");
+    return (m_window == ClaudeUsageWindow::Rolling5Hours ? L"Claude 5h" : m_window == ClaudeUsageWindow::Rolling7Days ? L"Claude 7d" : L"Claude Fable 7d");
 }
 
 const wchar_t* CClaudeUsageItem::GetItemId() const
 {
-    return (m_window == ClaudeUsageWindow::Rolling5Hours ? L"ClaudeUsage5Hours" : L"ClaudeUsage7Days");
+    return (m_window == ClaudeUsageWindow::Rolling5Hours ? L"ClaudeUsage5Hours" : m_window == ClaudeUsageWindow::Rolling7Days ? L"ClaudeUsage7Days" : L"ClaudeUsageFable7Days");
 }
 
 const wchar_t* CClaudeUsageItem::GetItemLableText() const
 {
-    return (m_window == ClaudeUsageWindow::Rolling5Hours ? L"C5h" : L"C7d");
+    return (m_window == ClaudeUsageWindow::Rolling5Hours ? L"C5h" : m_window == ClaudeUsageWindow::Rolling7Days ? L"C7d" : L"CF7d");
 }
 
 const wchar_t* CClaudeUsageItem::GetItemValueText() const
@@ -329,7 +335,7 @@ const wchar_t* CCodexCreditsItem::GetItemValueText() const
 
 const wchar_t* CCodexCreditsItem::GetItemValueSampleText() const
 {
-    return L"99.9K";
+    return L"999,999";
 }
 
 bool CCodexCreditsItem::IsCustomDraw() const
@@ -339,7 +345,7 @@ bool CCodexCreditsItem::IsCustomDraw() const
 
 int CCodexCreditsItem::GetItemWidth() const
 {
-    return 64;
+    return 72;
 }
 
 int CCodexCreditsItem::GetItemWidthEx(void* hDC) const
@@ -367,6 +373,82 @@ void CCodexCreditsItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dar
         credits.available && !credits.stale, 0.0f, x, y, w, h, false);
 }
 
+CResetCreditsItem::CResetCreditsItem(ResetCreditsService service)
+    : m_service(service)
+{
+}
+
+usage_tooltip::ResetCredits CResetCreditsItem::GetResetCredits() const
+{
+    return m_service == ResetCreditsService::Claude ? g_claude_usage_data.GetResetCredits() : g_codex_usage_data.GetResetCredits();
+}
+
+const wchar_t* CResetCreditsItem::GetItemName() const
+{
+    return m_service == ResetCreditsService::Claude ? L"Claude resets" : L"Codex resets";
+}
+
+const wchar_t* CResetCreditsItem::GetItemId() const
+{
+    return m_service == ResetCreditsService::Claude ? L"ClaudeResetCredits" : L"CodexResetCredits";
+}
+
+const wchar_t* CResetCreditsItem::GetItemLableText() const
+{
+    return m_service == ResetCreditsService::Claude ? L"Crs" : L"Xrs";
+}
+
+const wchar_t* CResetCreditsItem::GetItemValueText() const
+{
+    const usage_tooltip::ResetCredits credits = GetResetCredits();
+    m_value_text_cache = credits.available ? std::to_wstring(credits.count) : L"--";
+    return m_value_text_cache.c_str();
+}
+
+const wchar_t* CResetCreditsItem::GetItemValueSampleText() const
+{
+    return L"99";
+}
+
+bool CResetCreditsItem::IsCustomDraw() const
+{
+    return true;
+}
+
+int CResetCreditsItem::GetItemWidth() const
+{
+    return 48;
+}
+
+int CResetCreditsItem::GetItemWidthEx(void* hDC) const
+{
+    CDC* pDC = CDC::FromHandle(static_cast<HDC>(hDC));
+    if (pDC == nullptr)
+        return GetItemWidth();
+
+    const int padding = 4;
+    const int gap = 4;
+    const int accent_width = 3;
+    const int label_width = MeasureTextWidth(pDC, GetItemLableText());
+    const int value_width = MeasureTextWidth(pDC, GetItemValueSampleText());
+    return padding * 2 + accent_width + gap + label_width + gap + value_width;
+}
+
+void CResetCreditsItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode)
+{
+    CDC* pDC = CDC::FromHandle(static_cast<HDC>(hDC));
+    if (pDC == nullptr || w <= 0 || h <= 0)
+        return;
+
+    const usage_tooltip::ResetCredits credits = GetResetCredits();
+    const DrawColors colors = m_service == ResetCreditsService::Claude
+        ? GetDrawColors(ClaudeUsageWindow::Rolling7Days, dark_mode)
+        : GetCodexDrawColors(CodexUsageWindow::Rolling7Days, dark_mode);
+    const std::wstring value_text = credits.available ? std::to_wstring(credits.count) : L"--";
+    DrawUsageItemBar(pDC, colors, GetItemLableText(), value_text.c_str(), GetItemValueSampleText(),
+        credits.available && !credits.stale, 0.0f, x, y, w, h, false);
+}
+
 CClaudeUsagePlugin& CClaudeUsagePlugin::Instance()
 {
     static CClaudeUsagePlugin instance;
@@ -387,6 +469,12 @@ IPluginItem* CClaudeUsagePlugin::GetItem(int index)
         return &m_codex_seven_day_item;
     case 4:
         return &m_codex_credits_item;
+    case 5:
+        return &m_claude_resets_item;
+    case 6:
+        return &m_codex_resets_item;
+    case 7:
+        return &m_fable_seven_day_item;
     default:
         return nullptr;
     }
@@ -445,6 +533,18 @@ const wchar_t* CClaudeUsagePlugin::GetTooltipInfo()
     if (!m_tooltip_text_cache.empty() && !codex_tooltip.empty())
         m_tooltip_text_cache += L"\n\n";
     m_tooltip_text_cache += codex_tooltip;
+
+    // Both services' reset credits in one section; names padded so the expiries line up.
+    const usage_tooltip::ResetCredits claude_resets = g_claude_usage_data.GetResetCredits();
+    const usage_tooltip::ResetCredits codex_resets = g_codex_usage_data.GetResetCredits();
+    if (claude_resets.available || codex_resets.available)
+    {
+        m_tooltip_text_cache += L"\n\n" + std::wstring(usage_tooltip::TICKET) + L" Reset Credits";
+        if (claude_resets.available)
+            m_tooltip_text_cache += L"\n" + usage_tooltip::ResetCreditsLine(L"Claude", 6, claude_resets);
+        if (codex_resets.available)
+            m_tooltip_text_cache += L"\n" + usage_tooltip::ResetCreditsLine(L"Codex", 6, codex_resets);
+    }
     return m_tooltip_text_cache.c_str();
 }
 

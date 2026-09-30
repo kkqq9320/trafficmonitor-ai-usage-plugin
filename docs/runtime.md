@@ -9,7 +9,8 @@ Claude usage limits:
 - The helper refreshes every 5 minutes by default (`claude_refresh_minutes`, minimum 1 minute) and honors `Retry-After` on HTTP 429
 - While Claude Code is in use, the helper refreshes sooner: it watches the transcript folder (`%USERPROFILE%\.claude\projects`, or `CLAUDE_CONFIG_DIR\projects`) and fetches 5 seconds after new activity, at most once a minute. It only notices that a `.jsonl` file changed; it never reads the transcripts. Rate limits and sign-in problems keep the regular schedule, and usage from claude.ai or the Claude app alone is picked up on the regular refresh
 - The plugin checks the snapshot's write time every 5 seconds and shows a new snapshot right away
-- The usage request carries `?cedar_ember=1`, which adds the account's usage-limit reset grants. The helper counts unpaused grants (`resets_left`, or 1 for a usable grant with none left) like the claude.ai settings page and stores `reset_credits = { available_count, earliest_expires_at }`; the tooltip shows `Reset credits: <count>` with the earliest expiry. Nothing is shown when the account is not eligible. The helper only reads grants and never uses a reset
+- The usage request carries `?cedar_ember=1`, which adds the account's usage-limit reset grants. The helper counts unpaused grants (`resets_left`, or 1 for a usable grant with none left) like the claude.ai settings page and stores `reset_credits = { available_count, earliest_expires_at }`; the tooltip's reset credits section and the optional `Claude resets` item (`Crs`) show the count with the earliest expiry. Nothing is shown when the account is not eligible. The helper only reads grants and never uses a reset
+- The same response names the plan tier (`cedar_ember.event_props.tier`, for example `claude_max_5x`) and lists model-scoped weekly limits (`limits[]` entries of kind `weekly_scoped`, for example Fable). The helper stores `plan` (`Max (5x)`, or null for an unfamiliar tier) and `seven_day_models = [{ name, utilization, resets_at }]` without an extra request. The tooltip adds a line per model and the plan, and the optional `Claude Fable 7d` item (`CF7d`) shows the Fable limit
 - A rate-limited or failed request keeps the last snapshot; the tooltip shows its age and the helper status
 - Snapshots older than two refresh intervals are drawn dimmed and marked stale; snapshots older than 30 minutes are dropped and Claude shows unavailable
 
@@ -28,10 +29,34 @@ Codex usage limits:
   - the newest event is chosen by its own timestamp, not by file modification time. Codex keeps session files open while appending, and Windows does not advance their modification time until the file is closed
   - the 32 most recently opened files are scanned from the end (up to 16 MB each, so large sessions are no longer skipped); later scans read only appended bytes
 - Classifies a 300-minute window (±1) as `X5h` and a 10080-minute window (±1) as `X7d` regardless of `primary` / `secondary` position; the legacy mapping is used only when `window_minutes` is absent
-- The tooltip shows data age, source, plan and whether the limit is reached. Values older than 30 minutes, or whose reset time has passed, are drawn dimmed and marked in the tooltip
-- When the server reports free rate limit resets, the tooltip adds `Reset credits: <count>` with the earliest expiry (the app-server reports expiry; `wham/usage` reports only the count). Session JSONL has no reset credits, so the last server value is kept
-- The `codex` bucket also reports the Codex credits balance (`credits`: `has_credits`, `unlimited`, `balance`; the server sends `balance` as a string). Session events carry it too, so the balance follows each Codex turn; an event without it keeps the last value. The optional `Codex credits` item (`Xcr`) shows the balance shortened and cut rather than rounded (`12.7`, `62.5K`, `1.2M`), `∞` when unlimited, `0` when the account has no credits, and `--` when the source reports none. The tooltip adds `Credits: <exact balance>`, and the item is drawn dimmed with the other Codex values when the data is stale
+- The tooltip shows data age, source (`Codex API` for the app-server and `wham/usage`, `Codex session log` for session events), plan and whether the limit is reached. Values older than 30 minutes, or whose reset time has passed, are drawn dimmed and marked in the tooltip
+- When the server reports free rate limit resets, the tooltip's reset credits section and the optional `Codex resets` item (`Xrs`) show the count with the earliest expiry (the app-server reports expiry; `wham/usage` reports only the count). Session JSONL has no reset credits, so the last server value is kept
+- The `codex` bucket also reports the Codex credits balance (`credits`: `has_credits`, `unlimited`, `balance`; the server sends `balance` as a string). Session events carry it too, so the balance follows each Codex turn; an event without it keeps the last value. The optional `Codex credits` item (`Xcr`) and the tooltip's `Credits:` line show the whole balance (`62,500`, `12.75`), `∞` when unlimited, `0` when the account has no credits, and `--` when the source reports none. The item is drawn dimmed with the other Codex values when the data is stale
 - Respects `CODEX_HOME` when it resolves to a Windows-readable path, including WSL-style `/mnt/c/...` paths
+
+Tooltip layout (one section per service, then the reset credits of both):
+
+```text
+📊 Claude left 5h 86% · 7d 17% · Fable 91%
+5h: 14% (3h 50m) at 2026-10-01 04:19 Thursday
+7d: 83% (2d 22h 30m) at 2026-10-03 22:59 Saturday
+Fable 7d: 9% (2d 22h 30m) at 2026-10-03 22:59 Saturday
+
+Updated: just now, Claude web helper, Plan Max (5x)
+
+📊 Codex left 7d 14%
+7d: 86% (3d 2h 50m) at 2026-10-04 03:19 Sunday
+Credits: 62,500
+
+Updated: 11m ago, Codex API, Plan Pro
+
+🎟 Reset Credits
+1 · Claude (Expires : 2026-10-23 01:00 Friday)
+2 · Codex  (Expires : 2026-10-23 05:39 Friday)
+```
+
+- The header shows the percentage left; each line shows the percentage used, the time left and the local reset time with the weekday in the Windows display language. Only windows the source reports are listed
+- `(stale)` follows the `Updated:` line when the data is old, `(reset time passed)` replaces the time left once a reset time is past, and helper problems follow on the next line
 
 ## Helper Settings
 

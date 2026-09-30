@@ -81,7 +81,7 @@ Check these items, then click `OK`:
 - `Claude 7d`
 - `Codex 5h`
 - `Codex 7d`
-- `Codex credits` (optional: Codex credits balance)
+- Optional: `Claude Fable 7d` (Fable weekly limit), `Codex credits` (Codex credits balance), `Claude resets` and `Codex resets` (usage-limit resets held)
 
 <p align="center">
   <img src="images/trafficmonitor-display-settings.png" alt="TrafficMonitor Display settings with Claude and Codex usage items enabled" />
@@ -115,6 +115,6 @@ If your Codex state does not live in `%USERPROFILE%\.codex`, set `CODEX_HOME` in
 ## Quick Verification
 
 - TrafficMonitor plug-in management shows `AI Usage Limits`
-- Display settings lists `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`, and `Codex credits`
+- Display settings lists `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`, `Codex credits`, `Claude resets`, `Codex resets`, and `Claude Fable 7d`
 - The taskbar items show percentages instead of `--`
 - The tooltip shows reset timing when the active source exposes it

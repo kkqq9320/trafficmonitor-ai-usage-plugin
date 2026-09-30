@@ -54,7 +54,7 @@ TrafficMonitor
 ```
 
 4. Restart TrafficMonitor.
-5. Open TrafficMonitor's taskbar window and enable `Claude 5h`, `Claude 7d`, `Codex 5h`, and `Codex 7d` (and `Codex credits` if you want the credits balance).
+5. Open TrafficMonitor's taskbar window and enable `Claude 5h`, `Claude 7d`, `Codex 5h`, and `Codex 7d` (and the optional `Claude Fable 7d`, `Codex credits`, `Claude resets`, `Codex resets` if you want them).
 6. Run the one-time Claude login if you want live Claude values:
 
 ```powershell
@@ -74,7 +74,7 @@ For the full screenshot walkthrough, see [docs/install.md](docs/install.md).
 - `5h` = current 5-hour limit window
 - `7d` = current 7-day limit window
 - `C5h`, `C7d`, `X5h`, and `X7d` show used percentage
-- `Xcr` (the optional `Codex credits` item) shows the Codex credits balance, shortened as `62.5K`; the tooltip shows the exact balance. See [docs/runtime.md](docs/runtime.md#runtime-model)
+- Optional items: `CF7d` (`Claude Fable 7d`) shows the Fable weekly limit, `Xcr` (`Codex credits`) the Codex credits balance, and `Crs` / `Xrs` (`Claude resets` / `Codex resets`) the usage-limit resets each account holds. See [docs/runtime.md](docs/runtime.md#runtime-model)
 - Tooltips show the same used percentage plus reset timing when reset metadata is available
 - If Codex local data reports remaining percentage, the plugin converts it before display
 

@@ -62,6 +62,35 @@ private:
     mutable std::wstring m_value_text_cache;
 };
 
+enum class ResetCreditsService
+{
+    Claude,
+    Codex,
+};
+
+// Usage-limit resets an account holds: label and count only.
+class CResetCreditsItem : public IPluginItem
+{
+public:
+    explicit CResetCreditsItem(ResetCreditsService service);
+
+    const wchar_t* GetItemName() const override;
+    const wchar_t* GetItemId() const override;
+    const wchar_t* GetItemLableText() const override;
+    const wchar_t* GetItemValueText() const override;
+    const wchar_t* GetItemValueSampleText() const override;
+    bool IsCustomDraw() const override;
+    int GetItemWidth() const override;
+    int GetItemWidthEx(void* hDC) const override;
+    void DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode) override;
+
+private:
+    usage_tooltip::ResetCredits GetResetCredits() const;
+
+    ResetCreditsService m_service;
+    mutable std::wstring m_value_text_cache;
+};
+
 class CClaudeUsagePlugin : public ITMPlugin
 {
 private:
@@ -82,6 +111,9 @@ private:
     CCodexUsageItem m_codex_five_hour_item{ CodexUsageWindow::Rolling5Hours };
     CCodexUsageItem m_codex_seven_day_item{ CodexUsageWindow::Rolling7Days };
     CCodexCreditsItem m_codex_credits_item;
+    CResetCreditsItem m_claude_resets_item{ ResetCreditsService::Claude };
+    CResetCreditsItem m_codex_resets_item{ ResetCreditsService::Codex };
+    CClaudeUsageItem m_fable_seven_day_item{ ClaudeUsageWindow::Fable7Days };
     std::wstring m_tooltip_text_cache;
 };
 

@@ -67,6 +67,6 @@ same version.
 
 1. Test the `x64` asset with an official `x64` TrafficMonitor install.
 2. Confirm TrafficMonitor loads `AI Usage Limits`.
-3. Confirm `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`, and `Codex credits` appear in display settings.
+3. Confirm `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`, `Codex credits`, `Claude resets`, `Codex resets`, and `Claude Fable 7d` appear in display settings.
 4. Confirm the tooltip shows localized reset times.
 5. Confirm Claude becomes unavailable if the helper snapshot is stale instead of showing stale values forever.

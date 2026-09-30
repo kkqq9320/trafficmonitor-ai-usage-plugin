@@ -10,9 +10,12 @@
 - The Codex tooltip lists free rate limit resets the account holds ("Reset credits: 1 (expires ...)"), taken from `rateLimitResetCredits` in `account/rateLimits/read` or `rate_limit_reset_credits` in `wham/usage`. The helper stores them as `reset_credits` in `codex-usage.json`.
 - The Claude tooltip lists the account's usage-limit reset grants the same way ("Reset credits: 1 (expires ...)"). The helper asks for them with `?cedar_ember=1` on the usage request it already makes, so no extra request is sent, and stores them as `reset_credits` in `claude-web-usage.json`. Neither helper ever uses a reset.
 - `Codex credits` taskbar item (`Xcr`) and a `Credits: 62,500` Codex tooltip line for the Codex credits balance, read from the `codex` bucket's `credits` in `account/rateLimits/read`, `wham/usage`, and session JSONL. The helper stores it as `credits` in `codex-usage.json`.
+- `Claude resets` (`Crs`) and `Codex resets` (`Xrs`) taskbar items for the usage-limit resets each account holds.
+- `Claude Fable 7d` taskbar item (`CF7d`) and a tooltip line for each model-scoped weekly limit, read from `limits[]` in the Claude usage response. The Claude helper stores them as `seven_day_models`, and the plan (`Max (5x)`) from the same response as `plan`; no extra request is sent.
 - Regression tests for mtime-only updates, mixed limit ids, files over 32 MB, null windows, helper snapshots, and stale display; Node tests for both helpers; a Codex helper wrapper test.
 
 ### Changed
+- The tooltip has one section per service (`Claude left 5h 86% · 7d 17%` header; `7d: 83% (2d 22h 30m) at 2026-10-03 22:59 <weekday>` lines; `Updated: just now, Claude web helper, Plan Max (5x)`) and ends with a `Reset Credits` section listing both services.
 - The plugin prefers the Codex helper snapshot and re-reads it only when its write time changes. Session JSONL is the fallback.
 - The Claude helper refreshes every 5 minutes by default instead of every 60 seconds, keeps the last snapshot on HTTP 429, and waits for `Retry-After`. The plugin accepts Claude snapshots up to 30 minutes old.
 - Both helpers run with a pinned Node.js (`node_path` or a standard install location) instead of the first `node` on PATH.

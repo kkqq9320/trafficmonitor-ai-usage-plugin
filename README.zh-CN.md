@@ -54,7 +54,7 @@ TrafficMonitor
 ```
 
 4. 重启 TrafficMonitor。
-5. 打开 TrafficMonitor 的任务栏显示设置，启用 `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`（如需显示 credits 余额，再启用 `Codex credits`）。
+5. 打开 TrafficMonitor 的任务栏显示设置，启用 `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`（需要时再启用可选项目 `Claude Fable 7d`、`Codex credits`、`Claude resets`、`Codex resets`）。
 6. 如果需要实时 Claude 数值，请执行一次 Claude 登录。
 
 ```powershell
@@ -74,7 +74,7 @@ powershell -ExecutionPolicy Bypass -File .\plugins\ClaudeUsagePlugin\claude-web-
 - `5h` = 当前 5 小时限制周期
 - `7d` = 当前 7 天限制周期
 - `C5h`, `C7d`, `X5h`, `X7d` 显示已使用百分比
-- `Xcr`（可选项目 `Codex credits`）以 `62.5K` 这样的简写显示 Codex credits 余额，tooltip 显示精确余额。详见 [docs/runtime.md](docs/runtime.md#runtime-model)
+- 可选项目：`CF7d`（`Claude Fable 7d`）显示 Fable 每周限额，`Xcr`（`Codex credits`）显示 Codex credits 余额，`Crs` / `Xrs`（`Claude resets` / `Codex resets`）显示各账户持有的用量重置次数。详见 [docs/runtime.md](docs/runtime.md#runtime-model)
 - tooltip 显示相同的使用百分比，并在有重置时间信息时显示重置时间
 - 如果 Codex 本地数据提供 remaining percentage，插件会在显示前转换为 used percentage
 

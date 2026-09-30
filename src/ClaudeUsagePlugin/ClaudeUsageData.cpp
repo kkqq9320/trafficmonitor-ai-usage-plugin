@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cwctype>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -571,51 +572,6 @@ bool FileTimeToUnixSeconds(const FILETIME& file_time, long long& unix_seconds)
     return true;
 }
 
-std::wstring FormatDurationFromSeconds(unsigned long long total_seconds)
-{
-    if (total_seconds < 60ULL)
-        return L"<1m";
-
-    const unsigned long long total_minutes = total_seconds / 60ULL;
-    const unsigned long long days = total_minutes / (24ULL * 60ULL);
-    const unsigned long long hours = (total_minutes / 60ULL) % 24ULL;
-    const unsigned long long minutes = total_minutes % 60ULL;
-
-    std::wstring text;
-    if (days > 0)
-    {
-        text = std::to_wstring(days) + L"d";
-        if (hours > 0)
-            text += L" " + std::to_wstring(hours) + L"h";
-        return text;
-    }
-
-    if (hours > 0)
-    {
-        text = std::to_wstring(hours) + L"h";
-        if (minutes > 0)
-            text += L" " + std::to_wstring(minutes) + L"m";
-        return text;
-    }
-
-    return std::to_wstring(minutes) + L"m";
-}
-
-std::wstring FormatResetRemaining(long long reset_at_unix_seconds)
-{
-    FILETIME now_file_time{};
-    GetSystemTimeAsFileTime(&now_file_time);
-
-    long long now_unix_seconds{};
-    if (!FileTimeToUnixSeconds(now_file_time, now_unix_seconds))
-        return std::wstring();
-
-    if (reset_at_unix_seconds <= now_unix_seconds)
-        return L"now";
-
-    return L"in " + FormatDurationFromSeconds(static_cast<unsigned long long>(reset_at_unix_seconds - now_unix_seconds));
-}
-
 bool FileTimeToLocalText(const FILETIME& utc_file_time, std::wstring& text)
 {
     SYSTEMTIME utc_time{};
@@ -659,60 +615,6 @@ std::wstring FormatResetTime(const std::wstring& raw_value)
     return text;
 }
 
-std::wstring FormatPercentage(double value)
-{
-    const double clamped = (value < 0.0 ? 0.0 : (value > 100.0 ? 100.0 : value));
-    const double rounded_whole = std::round(clamped);
-    wchar_t buffer[32];
-    if (std::fabs(clamped - rounded_whole) < 0.05)
-        swprintf_s(buffer, L"%.0f%%", rounded_whole);
-    else
-        swprintf_s(buffer, L"%.1f%%", clamped);
-    return buffer;
-}
-
-std::wstring BuildMetricTooltip(const wchar_t* label, const CClaudeUsageData::Metric& metric)
-{
-    std::wstring text(label);
-    text += L": ";
-    if (!metric.available)
-    {
-        text += L"unavailable";
-        return text;
-    }
-
-    text += FormatPercentage(metric.percentage);
-    if (metric.has_reset_time && metric.reset_at_unix_seconds <= helper_support::GetUnixNowSeconds())
-    {
-        text += L" (reset time passed at ";
-        text += metric.reset_time_text;
-        text += L"; waiting for new data)";
-        return text;
-    }
-    const std::wstring reset_remaining = (metric.has_reset_time ? FormatResetRemaining(metric.reset_at_unix_seconds) : std::wstring());
-    if (!reset_remaining.empty() && !metric.reset_time_text.empty())
-    {
-        text += L" (resets ";
-        text += reset_remaining;
-        text += L" at ";
-        text += metric.reset_time_text;
-        text += L")";
-    }
-    else if (!reset_remaining.empty())
-    {
-        text += L" (resets ";
-        text += reset_remaining;
-        text += L")";
-    }
-    else if (!metric.reset_time_text.empty())
-    {
-        text += L" (resets at ";
-        text += metric.reset_time_text;
-        text += L")";
-    }
-    return text;
-}
-
 void ApplyResetAtValue(const std::wstring& reset_at, CClaudeUsageData::Metric& metric)
 {
     if (reset_at.empty())
@@ -720,23 +622,11 @@ void ApplyResetAtValue(const std::wstring& reset_at, CClaudeUsageData::Metric& m
 
     FILETIME reset_file_time{};
     if (TryParseUtcIso8601(reset_at, reset_file_time))
-    {
         metric.has_reset_time = FileTimeToUnixSeconds(reset_file_time, metric.reset_at_unix_seconds);
-        if (!FileTimeToLocalText(reset_file_time, metric.reset_time_text))
-            metric.reset_time_text = reset_at;
-    }
-    else
-    {
-        metric.reset_time_text = reset_at;
-    }
 }
 
-bool LoadMetricFromApiSection(const std::wstring& response_json, const wchar_t* section_name, CClaudeUsageData::Metric& metric)
+bool LoadMetricObject(const std::wstring& section_json, CClaudeUsageData::Metric& metric)
 {
-    std::wstring section_json;
-    if (!TryGetJsonObject(response_json, section_name, section_json))
-        return false;
-
     double utilization{};
     if (!TryGetJsonDouble(section_json, L"utilization", utilization))
         return false;
@@ -749,6 +639,50 @@ bool LoadMetricFromApiSection(const std::wstring& response_json, const wchar_t* 
         ApplyResetAtValue(resets_at, metric);
 
     return true;
+}
+
+bool LoadMetricFromApiSection(const std::wstring& response_json, const wchar_t* section_name, CClaudeUsageData::Metric& metric)
+{
+    std::wstring section_json;
+    return TryGetJsonObject(response_json, section_name, section_json) && LoadMetricObject(section_json, metric);
+}
+
+// The objects of a top-level array such as "seven_day_models": [{...}, {...}].
+std::vector<std::wstring> GetJsonArrayObjects(const std::wstring& json, const wchar_t* key)
+{
+    std::vector<std::wstring> objects;
+    size_t value_pos{};
+    if (!FindJsonKey(json, key, value_pos))
+        return objects;
+    while (value_pos < json.size() && iswspace(json[value_pos]))
+        ++value_pos;
+    if (value_pos >= json.size() || json[value_pos] != L'[')
+        return objects;
+    const size_t end_pos = FindMatchingBracket(json, value_pos, L'[', L']');
+    if (end_pos == std::wstring::npos)
+        return objects;
+    for (size_t pos = value_pos + 1; pos < end_pos;)
+    {
+        const size_t open_pos = json.find(L'{', pos);
+        if (open_pos == std::wstring::npos || open_pos > end_pos)
+            break;
+        const size_t close_pos = FindMatchingBracket(json, open_pos, L'{', L'}');
+        if (close_pos == std::wstring::npos || close_pos > end_pos)
+            break;
+        objects.push_back(json.substr(open_pos, close_pos - open_pos + 1));
+        pos = close_pos + 1;
+    }
+    return objects;
+}
+
+void LoadModelMetrics(const std::wstring& json, CClaudeUsageData::Snapshot& snapshot)
+{
+    for (const std::wstring& model_json : GetJsonArrayObjects(json, L"seven_day_models"))
+    {
+        CClaudeUsageData::ModelMetric model;
+        if (TryGetJsonString(model_json, L"name", model.name) && !model.name.empty() && LoadMetricObject(model_json, model.metric))
+            snapshot.seven_day_models.push_back(model);
+    }
 }
 
 void LoadResetCredits(const std::wstring& json, CClaudeUsageData::Snapshot& snapshot)
@@ -773,6 +707,8 @@ bool LoadSnapshotFromCachedJson(const std::wstring& json, CClaudeUsageData::Snap
 {
     const bool has_api_5h = LoadMetricFromApiSection(json, L"five_hour", snapshot.rolling_5h);
     const bool has_api_7d = LoadMetricFromApiSection(json, L"seven_day", snapshot.rolling_7d);
+    LoadModelMetrics(json, snapshot);
+    TryGetJsonString(json, L"plan", snapshot.plan);
     LoadResetCredits(json, snapshot);
     return has_api_5h || has_api_7d;
 }
@@ -811,6 +747,8 @@ bool TryLoadHelperUsageSnapshot(CClaudeUsageData::Snapshot& snapshot, bool requi
 
     snapshot.rolling_5h = cached_snapshot.rolling_5h;
     snapshot.rolling_7d = cached_snapshot.rolling_7d;
+    snapshot.seven_day_models = cached_snapshot.seven_day_models;
+    snapshot.plan = cached_snapshot.plan;
     snapshot.has_reset_credits = cached_snapshot.has_reset_credits;
     snapshot.reset_credits = cached_snapshot.reset_credits;
     snapshot.has_reset_credits_expiry = cached_snapshot.has_reset_credits_expiry;
@@ -1003,7 +941,9 @@ const std::wstring& CClaudeUsageData::GetValueText(ClaudeUsageWindow window) con
     thread_local std::wstring value_text;
 
     std::lock_guard<std::mutex> lock(m_state_mutex);
-    value_text = (window == ClaudeUsageWindow::Rolling5Hours ? m_snapshot.value_5h_text : m_snapshot.value_7d_text);
+    value_text = (window == ClaudeUsageWindow::Rolling5Hours ? m_snapshot.value_5h_text
+        : window == ClaudeUsageWindow::Rolling7Days ? m_snapshot.value_7d_text
+        : m_snapshot.value_fable_7d_text);
     return value_text;
 }
 
@@ -1012,8 +952,16 @@ const CClaudeUsageData::Metric& CClaudeUsageData::GetMetric(ClaudeUsageWindow wi
     thread_local Metric metric;
 
     std::lock_guard<std::mutex> lock(m_state_mutex);
-    metric = (window == ClaudeUsageWindow::Rolling5Hours ? m_snapshot.rolling_5h : m_snapshot.rolling_7d);
+    metric = (window == ClaudeUsageWindow::Rolling5Hours ? m_snapshot.rolling_5h
+        : window == ClaudeUsageWindow::Rolling7Days ? m_snapshot.rolling_7d
+        : m_snapshot.fable_7d);
     return metric;
+}
+
+usage_tooltip::ResetCredits CClaudeUsageData::GetResetCredits() const
+{
+    std::lock_guard<std::mutex> lock(m_state_mutex);
+    return m_snapshot.reset_credits_view;
 }
 
 const std::wstring& CClaudeUsageData::GetTooltipText() const
@@ -1060,50 +1008,60 @@ void CClaudeUsageData::FinalizeSnapshot(Snapshot& snapshot)
     const long long now_unix = helper_support::GetUnixNowSeconds();
     const long long stale_after_seconds = (std::max)(180LL, static_cast<long long>(snapshot.refresh_ms / 1000ULL) * 2LL + 60LL);
     const bool data_stale = snapshot.has_data_time && now_unix - snapshot.data_at_unix > stale_after_seconds;
-    CClaudeUsageData::Metric* metrics[] = { &snapshot.rolling_5h, &snapshot.rolling_7d };
-    for (CClaudeUsageData::Metric* metric : metrics)
+    auto mark_stale = [&](CClaudeUsageData::Metric& metric) {
+        metric.stale = metric.available &&
+            (data_stale || (metric.has_reset_time && metric.reset_at_unix_seconds <= now_unix));
+    };
+    mark_stale(snapshot.rolling_5h);
+    mark_stale(snapshot.rolling_7d);
+    for (ModelMetric& model : snapshot.seven_day_models)
     {
-        metric->stale = metric->available &&
-            (data_stale || (metric->has_reset_time && metric->reset_at_unix_seconds <= now_unix));
+        mark_stale(model.metric);
+        if (_wcsicmp(model.name.c_str(), L"Fable") == 0 && !snapshot.fable_7d.available)
+            snapshot.fable_7d = model.metric;
     }
 
-    snapshot.value_5h_text = (snapshot.rolling_5h.available ? FormatPercentage(snapshot.rolling_5h.percentage) : L"--");
-    snapshot.value_7d_text = (snapshot.rolling_7d.available ? FormatPercentage(snapshot.rolling_7d.percentage) : L"--");
+    snapshot.value_5h_text = (snapshot.rolling_5h.available ? usage_tooltip::FormatPercentage(snapshot.rolling_5h.percentage) : L"--");
+    snapshot.value_7d_text = (snapshot.rolling_7d.available ? usage_tooltip::FormatPercentage(snapshot.rolling_7d.percentage) : L"--");
+    snapshot.value_fable_7d_text = (snapshot.fable_7d.available ? usage_tooltip::FormatPercentage(snapshot.fable_7d.percentage) : L"--");
 
     if (!HasAvailableMetric(snapshot))
     {
-        snapshot.tooltip_text = L"Claude usage limits unavailable";
+        snapshot.tooltip_text = std::wstring(usage_tooltip::CHART) + L" Claude usage unavailable";
         if (!snapshot.error_text.empty())
-        {
-            snapshot.tooltip_text += L"\n";
-            snapshot.tooltip_text += snapshot.error_text;
-        }
+            snapshot.tooltip_text += L"\n" + snapshot.error_text;
         return;
     }
 
-    snapshot.tooltip_text = L"Claude usage limits";
-    snapshot.tooltip_text += L"\n";
-    snapshot.tooltip_text += BuildMetricTooltip(L"5h", snapshot.rolling_5h);
-    snapshot.tooltip_text += L"\n";
-    snapshot.tooltip_text += BuildMetricTooltip(L"7d", snapshot.rolling_7d);
-    if (snapshot.has_reset_credits)
-    {
-        snapshot.tooltip_text += L"\nReset credits: " + std::to_wstring(snapshot.reset_credits);
-        std::wstring expiry_text;
-        if (snapshot.has_reset_credits_expiry && helper_support::UnixSecondsToLocalText(snapshot.reset_credits_expires_at, expiry_text))
-            snapshot.tooltip_text += L" (expires " + expiry_text + L")";
-    }
+    snapshot.reset_credits_view.available = snapshot.has_reset_credits;
+    snapshot.reset_credits_view.stale = data_stale;
+    snapshot.reset_credits_view.count = snapshot.reset_credits;
+    snapshot.reset_credits_view.has_expiry = snapshot.has_reset_credits_expiry;
+    snapshot.reset_credits_view.expires_at = snapshot.reset_credits_expires_at;
+
+    std::vector<usage_tooltip::Window> windows;
+    auto add_window = [&](const std::wstring& label, const std::wstring& header_label, const CClaudeUsageData::Metric& metric) {
+        if (metric.available)
+            windows.push_back({ label, header_label, metric.percentage, metric.has_reset_time, metric.reset_at_unix_seconds });
+    };
+    add_window(L"5h", L"5h", snapshot.rolling_5h);
+    add_window(L"7d", L"7d", snapshot.rolling_7d);
+    for (const ModelMetric& model : snapshot.seven_day_models)
+        add_window(model.name + L" 7d", model.name, model.metric);
+
+    snapshot.tooltip_text = usage_tooltip::Header(L"Claude", windows);
+    for (const usage_tooltip::Window& window : windows)
+        snapshot.tooltip_text += L"\n" + usage_tooltip::WindowLine(window, now_unix);
     if (snapshot.has_data_time)
     {
-        snapshot.tooltip_text += L"\nUpdated " + helper_support::FormatAgeText(now_unix - snapshot.data_at_unix) + L", " + snapshot.source_text;
+        snapshot.tooltip_text += L"\n\nUpdated: " + helper_support::FormatAgeText(now_unix - snapshot.data_at_unix) + L", " + snapshot.source_text;
+        if (!snapshot.plan.empty())
+            snapshot.tooltip_text += L", Plan " + snapshot.plan;
         if (data_stale)
             snapshot.tooltip_text += L" (stale)";
     }
     if (!snapshot.error_text.empty())
-    {
-        snapshot.tooltip_text += L"\n";
-        snapshot.tooltip_text += snapshot.error_text;
-    }
+        snapshot.tooltip_text += L"\n" + snapshot.error_text;
 }
 
 bool CClaudeUsageData::HasAvailableMetric(const Snapshot& snapshot)

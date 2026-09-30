@@ -4,6 +4,8 @@
 #include <mutex>
 #include <string>
 
+#include "UsageTooltip.h"
+
 enum class CodexUsageWindow
 {
     Rolling5Hours,
@@ -24,7 +26,6 @@ public:
         long long window_minutes{};
         bool has_reset_time{};
         long long reset_at_unix_seconds{};
-        std::wstring reset_time_text;
         bool stale{};  // data older than the freshness limit, or its reset time already passed
     };
 
@@ -64,6 +65,7 @@ public:
         Metric rolling_5h;
         Metric rolling_7d;
         Credits credits;
+        usage_tooltip::ResetCredits reset_credits;
         std::wstring value_5h_text{ L"--" };
         std::wstring value_7d_text{ L"--" };
         std::wstring tooltip_text{ L"Codex usage limits unavailable" };
@@ -77,6 +79,7 @@ public:
     const std::wstring& GetValueText(CodexUsageWindow window) const;
     const Metric& GetMetric(CodexUsageWindow window) const;
     const Credits& GetCredits() const;
+    usage_tooltip::ResetCredits GetResetCredits() const;
     const std::wstring& GetTooltipText() const;
 
 private:

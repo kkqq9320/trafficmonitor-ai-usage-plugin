@@ -226,8 +226,6 @@ bool LoadMetricObject(const std::string& metric_json, Metric& metric)
     {
         metric.has_reset_time = true;
         metric.reset_at_unix_seconds = reset_at;
-        if (!helper_support::UnixSecondsToLocalText(reset_at, metric.reset_time_text))
-            metric.reset_time_text = std::to_wstring(reset_at);
     }
     return true;
 }
@@ -307,12 +305,13 @@ void LoadCredits(const std::string& parent_json, RateLimitRecord& record)
     record.credits_balance = balance;
 }
 
-std::wstring DescribeSource(const std::string& source, const std::string& method)
+// app-server and wham/usage both read the account from OpenAI; the snapshot file keeps which one.
+std::wstring DescribeSource(const std::string& source)
 {
     if (source == "server")
-        return method == "wham" ? L"server (wham/usage)" : L"server (app-server)";
+        return L"Codex API";
     if (source == "jsonl")
-        return L"session JSONL via helper";
+        return L"Codex session log";
     return helper_support::Utf8ToWide(source);
 }
 
@@ -342,11 +341,9 @@ bool ParseHelperSnapshot(const std::string& json, RateLimitRecord& record)
     }
 
     std::string source;
-    std::string method;
     std::string text;
     TryGetJsonString(json, "source", source);
-    TryGetJsonString(json, "method", method);
-    record.source = DescribeSource(source, method);
+    record.source = DescribeSource(source);
     if (TryGetJsonString(json, "plan_type", text))
         record.plan_type = helper_support::Utf8ToWide(text);
     if (TryGetJsonString(json, "rate_limit_reached_type", text))
@@ -410,7 +407,7 @@ bool ParseRateLimitEventLine(const std::string& line, RateLimitRecord& record)
         record.reached_type = helper_support::Utf8ToWide(text);
     record.limit_reached = ComputeLimitReached(record, false);
     LoadCredits(rate_limits, record);
-    record.source = L"session JSONL";
+    record.source = L"Codex session log";
     record.valid = true;
     return true;
 }
@@ -640,47 +637,7 @@ void ScanAppendedBytes(const std::wstring& path, unsigned long long from, unsign
 
 // --- presentation -------------------------------------------------------------
 
-std::wstring FormatPercentage(double value)
-{
-    const double clamped = (value < 0.0 ? 0.0 : (value > 100.0 ? 100.0 : value));
-    const double rounded_whole = std::round(clamped);
-    wchar_t buffer[32];
-    if (std::fabs(clamped - rounded_whole) < 0.05)
-        swprintf_s(buffer, L"%.0f%%", rounded_whole);
-    else
-        swprintf_s(buffer, L"%.1f%%", clamped);
-    return buffer;
-}
-
-// Taskbar form of a non-negative balance: 12.7, 950, 62.5K, 150K, 1.2M. Digits are cut, not
-// rounded, so the item never shows more than is left.
-std::wstring FormatCreditsShort(double balance)
-{
-    const wchar_t* suffix = L"";
-    double scaled = balance;
-    if (balance >= 1000000.0)
-    {
-        scaled = balance / 1000000.0;
-        suffix = L"M";
-    }
-    else if (balance >= 1000.0)
-    {
-        scaled = balance / 1000.0;
-        suffix = L"K";
-    }
-
-    wchar_t buffer[32];
-    if (scaled >= 100.0)
-        swprintf_s(buffer, L"%.0f", std::floor(scaled + 1e-9));
-    else
-        swprintf_s(buffer, L"%.1f", std::floor(scaled * 10.0 + 1e-9) / 10.0);
-    std::wstring text = buffer;
-    if (text.size() > 2 && text.compare(text.size() - 2, 2, L".0") == 0)
-        text.resize(text.size() - 2);
-    return text + suffix;
-}
-
-// Tooltip form of a non-negative balance: 62,500 or 12.75.
+// Non-negative balance as the item and the tooltip write it: 62,500 or 12.75.
 std::wstring FormatCreditsExact(double balance)
 {
     wchar_t buffer[64];
@@ -696,21 +653,13 @@ std::wstring FormatCreditsExact(double balance)
     return integer + fraction;
 }
 
-std::wstring BuildMetricTooltip(const wchar_t* label, const Metric& metric, long long now_unix)
+// "pro" -> "Pro"
+std::wstring PlanName(const std::wstring& plan_type)
 {
-    std::wstring text(label);
-    text += L": ";
-    if (!metric.available)
-        return text + L"unavailable";
-
-    text += FormatPercentage(metric.percentage);
-    if (!metric.has_reset_time)
-        return text;
-    if (metric.reset_at_unix_seconds <= now_unix)
-        return text + L" (reset time passed at " + metric.reset_time_text + L"; waiting for new data)";
-    return text + L" (resets in " +
-        helper_support::FormatDurationFromSeconds(static_cast<unsigned long long>(metric.reset_at_unix_seconds - now_unix)) +
-        L" at " + metric.reset_time_text + L")";
+    std::wstring name = plan_type;
+    if (!name.empty())
+        name[0] = static_cast<wchar_t>(towupper(name[0]));
+    return name;
 }
 
 std::wstring BuildHelperNote(bool helper_fresh)
@@ -917,8 +866,8 @@ CCodexUsageData::Snapshot CCodexUsageData::BuildSnapshot(const RateLimitRecord* 
         }
     }
 
-    snapshot.value_5h_text = snapshot.rolling_5h.available ? FormatPercentage(snapshot.rolling_5h.percentage) : L"--";
-    snapshot.value_7d_text = snapshot.rolling_7d.available ? FormatPercentage(snapshot.rolling_7d.percentage) : L"--";
+    snapshot.value_5h_text = snapshot.rolling_5h.available ? usage_tooltip::FormatPercentage(snapshot.rolling_5h.percentage) : L"--";
+    snapshot.value_7d_text = snapshot.rolling_7d.available ? usage_tooltip::FormatPercentage(snapshot.rolling_7d.percentage) : L"--";
 
     std::wstring credits_line;
     if (has_record && record->has_credits_info)
@@ -931,9 +880,8 @@ CCodexUsageData::Snapshot CCodexUsageData::BuildSnapshot(const RateLimitRecord* 
         }
         else if (record->has_credits_balance)
         {
-            const double balance = (std::max)(0.0, record->credits_balance);
-            snapshot.credits.value_text = FormatCreditsShort(balance);
-            exact_text = FormatCreditsExact(balance);
+            exact_text = FormatCreditsExact((std::max)(0.0, record->credits_balance));
+            snapshot.credits.value_text = exact_text;
         }
         else if (!record->has_credits)
         {
@@ -947,50 +895,58 @@ CCodexUsageData::Snapshot CCodexUsageData::BuildSnapshot(const RateLimitRecord* 
             credits_line = L"Credits: " + exact_text;
         }
     }
+    if (has_record && record->has_reset_credits)
+    {
+        snapshot.reset_credits.available = true;
+        snapshot.reset_credits.stale = data_stale;
+        snapshot.reset_credits.count = record->reset_credits;
+        snapshot.reset_credits.has_expiry = record->has_reset_credits_expiry;
+        snapshot.reset_credits.expires_at = record->reset_credits_expires_at;
+    }
 
     std::wstring updated_line;
     if (has_record)
     {
-        updated_line = L"Updated " + helper_support::FormatAgeText(now_unix - record->data_at_unix) + L", " + record->source;
+        updated_line = L"Updated: " + helper_support::FormatAgeText(now_unix - record->data_at_unix) + L", " + record->source;
         if (!record->plan_type.empty())
-            updated_line += L", plan " + record->plan_type;
+            updated_line += L", Plan " + PlanName(record->plan_type);
         if (data_stale)
             updated_line += L" (stale)";
     }
 
-    if (!snapshot.rolling_5h.available && !snapshot.rolling_7d.available)
+    std::vector<usage_tooltip::Window> windows;
+    if (snapshot.rolling_5h.available)
+        windows.push_back({ L"5h", L"5h", snapshot.rolling_5h.percentage, snapshot.rolling_5h.has_reset_time, snapshot.rolling_5h.reset_at_unix_seconds });
+    if (snapshot.rolling_7d.available)
+        windows.push_back({ L"7d", L"7d", snapshot.rolling_7d.percentage, snapshot.rolling_7d.has_reset_time, snapshot.rolling_7d.reset_at_unix_seconds });
+
+    if (windows.empty())
     {
-        snapshot.tooltip_text = L"Codex usage limits unavailable";
+        snapshot.tooltip_text = std::wstring(usage_tooltip::CHART) + L" Codex usage unavailable";
         if (has_record)
         {
+            snapshot.tooltip_text += L"\nNo 5h/7d window reported";
             if (!credits_line.empty())
                 snapshot.tooltip_text += L"\n" + credits_line;
-            snapshot.tooltip_text += L"\nNo 5h/7d window reported. " + updated_line;
+            snapshot.tooltip_text += L"\n\n" + updated_line;
         }
         else if (!error_text.empty())
             snapshot.tooltip_text += L"\n" + error_text;
     }
     else
     {
-        snapshot.tooltip_text = L"Codex usage limits";
-        snapshot.tooltip_text += L"\n" + BuildMetricTooltip(L"5h", snapshot.rolling_5h, now_unix);
-        snapshot.tooltip_text += L"\n" + BuildMetricTooltip(L"7d", snapshot.rolling_7d, now_unix);
+        snapshot.tooltip_text = usage_tooltip::Header(L"Codex", windows);
+        for (const usage_tooltip::Window& window : windows)
+            snapshot.tooltip_text += L"\n" + usage_tooltip::WindowLine(window, now_unix);
+        if (!credits_line.empty())
+            snapshot.tooltip_text += L"\n" + credits_line;
         if (record->limit_reached)
         {
             snapshot.tooltip_text += L"\nLimit reached";
             if (!record->reached_type.empty())
                 snapshot.tooltip_text += L" (" + record->reached_type + L")";
         }
-        if (record->has_reset_credits)
-        {
-            snapshot.tooltip_text += L"\nReset credits: " + std::to_wstring(record->reset_credits);
-            std::wstring expiry_text;
-            if (record->has_reset_credits_expiry && helper_support::UnixSecondsToLocalText(record->reset_credits_expires_at, expiry_text))
-                snapshot.tooltip_text += L" (expires " + expiry_text + L")";
-        }
-        if (!credits_line.empty())
-            snapshot.tooltip_text += L"\n" + credits_line;
-        snapshot.tooltip_text += L"\n" + updated_line;
+        snapshot.tooltip_text += L"\n\n" + updated_line;
     }
 
     if (!helper_note.empty())
@@ -1020,6 +976,12 @@ const CCodexUsageData::Credits& CCodexUsageData::GetCredits() const
     std::lock_guard<std::mutex> lock(m_state_mutex);
     credits = m_snapshot.credits;
     return credits;
+}
+
+usage_tooltip::ResetCredits CCodexUsageData::GetResetCredits() const
+{
+    std::lock_guard<std::mutex> lock(m_state_mutex);
+    return m_snapshot.reset_credits;
 }
 
 const std::wstring& CCodexUsageData::GetTooltipText() const

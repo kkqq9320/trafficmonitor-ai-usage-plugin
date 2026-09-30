@@ -434,7 +434,33 @@ export function summarizeResetGrants(cedarEmber) {
   return { available_count: count, earliest_expires_at: earliest };
 }
 
-function normalizeUsagePayload(raw) {
+// Plan name like the claude.ai settings page ("Max (5x)"), from the tier the usage response carries
+// in cedar_ember.event_props (claude_max_5x, claude_pro). Returns null when it is missing or unfamiliar.
+export function summarizePlan(cedarEmber) {
+  const tier = cedarEmber && cedarEmber.event_props && cedarEmber.event_props.tier;
+  const match = typeof tier === 'string' ? /^claude_([a-z]+)(?:_(\d+x))?$/.exec(tier) : null;
+  if (!match) {
+    return null;
+  }
+  const name = match[1].charAt(0).toUpperCase() + match[1].slice(1);
+  return match[2] ? `${name} (${match[2]})` : name;
+}
+
+// Model-scoped weekly limits from limits[] (for example Fable) as
+// [{ name, utilization, resets_at }], the same fields the plugin reads for five_hour/seven_day.
+export function summarizeModelLimits(limits) {
+  const models = [];
+  for (const limit of Array.isArray(limits) ? limits : []) {
+    const name = limit && limit.kind === 'weekly_scoped' && limit.scope && limit.scope.model && limit.scope.model.display_name;
+    if (typeof name !== 'string' || !name || !Number.isFinite(limit.percent)) {
+      continue;
+    }
+    models.push({ name, utilization: limit.percent, resets_at: typeof limit.resets_at === 'string' ? limit.resets_at : null });
+  }
+  return models;
+}
+
+export function normalizeUsagePayload(raw) {
   if (!raw || typeof raw !== 'object') {
     throw new Error('Invalid usage payload');
   }
@@ -446,9 +472,11 @@ function normalizeUsagePayload(raw) {
   return {
     source: 'claude-web-helper',
     generated_at: new Date().toISOString(),
+    plan: summarizePlan(raw.cedar_ember),
     five_hour: raw.five_hour || null,
     seven_day: raw.seven_day || null,
     seven_day_sonnet: raw.seven_day_sonnet || null,
+    seven_day_models: summarizeModelLimits(raw.limits),
     extra_usage: raw.extra_usage || null,
     reset_credits: summarizeResetGrants(raw.cedar_ember),
   };

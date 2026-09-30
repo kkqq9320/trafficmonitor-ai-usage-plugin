@@ -2,11 +2,15 @@
 
 #include <string>
 #include <mutex>
+#include <vector>
+
+#include "UsageTooltip.h"
 
 enum class ClaudeUsageWindow
 {
     Rolling5Hours,
     Rolling7Days,
+    Fable7Days,  // model-scoped weekly limit named "Fable"
 };
 
 class CClaudeUsageData
@@ -18,8 +22,14 @@ public:
         double percentage{};
         bool has_reset_time{};
         long long reset_at_unix_seconds{};
-        std::wstring reset_time_text;
         bool stale{};  // snapshot older than two helper refresh intervals, or reset time passed
+    };
+
+    // Model-scoped weekly limit such as Fable.
+    struct ModelMetric
+    {
+        std::wstring name;
+        Metric metric;
     };
 
 public:
@@ -29,8 +39,12 @@ public:
     {
         Metric rolling_5h;
         Metric rolling_7d;
+        std::vector<ModelMetric> seven_day_models;
+        Metric fable_7d;
         std::wstring value_5h_text{ L"--" };
         std::wstring value_7d_text{ L"--" };
+        std::wstring value_fable_7d_text{ L"--" };
+        std::wstring plan;
         std::wstring tooltip_text{ L"Claude usage limits unavailable" };
         std::wstring error_text;
         std::wstring source_text{ L"Claude OAuth usage API" };
@@ -43,12 +57,14 @@ public:
         long long reset_credits{};
         bool has_reset_credits_expiry{};
         long long reset_credits_expires_at{};
+        usage_tooltip::ResetCredits reset_credits_view;
     };
 
     void RefreshIfNeeded();
     void AutoStartBundledHelperIfNeeded();
     const std::wstring& GetValueText(ClaudeUsageWindow window) const;
     const Metric& GetMetric(ClaudeUsageWindow window) const;
+    usage_tooltip::ResetCredits GetResetCredits() const;
     const std::wstring& GetTooltipText() const;
 
 private:

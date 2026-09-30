@@ -481,12 +481,14 @@
     <ClInclude Include="framework.h" />
     <ClInclude Include="HelperSupport.h" />
     <ClInclude Include="pch.h" />
+    <ClInclude Include="UsageTooltip.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ClaudeUsageData.cpp" />
     <ClCompile Include="CodexUsageData.cpp" />
     <ClCompile Include="ClaudeUsagePlugin.cpp" />
     <ClCompile Include="HelperSupport.cpp" />
+    <ClCompile Include="UsageTooltip.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug (lite)|Win32'">Create</PrecompiledHeader>
