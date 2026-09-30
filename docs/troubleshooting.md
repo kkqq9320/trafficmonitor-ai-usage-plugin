@@ -1,18 +1,10 @@
 # Troubleshooting
 
-## Quick Verification
-
-After installation or setup, check the following:
-
-1. TrafficMonitor plug-in management shows `AI Usage Limits`
-2. Display settings lists `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`, `Codex credits`, `Claude resets`, `Codex resets`, and `Claude Fable 7d`
-3. The taskbar items show used percentages instead of `--`
-4. The tooltip shows used percentages and reset timing for any source that exposes reset metadata
-5. If Claude helper is enabled, `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\claude-web-usage.json` updates after a successful helper fetch
+Start with [Check the install](install.md#check-the-install) ([한국어](install.ko.md#설치-확인)). The sections below cover what those checks can turn up.
 
 ## Common Issues
 
-### Claude values show `--` or `Claude usage limits unavailable`
+### Claude values show `--` or `Claude usage unavailable`
 
 Verify that `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\claude-web-usage.json` exists and was updated recently by the helper.
 The Claude tooltip also surfaces the latest helper status when no fresh helper snapshot is available.

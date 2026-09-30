@@ -65,15 +65,23 @@ To print what a built DLL shows for the current user profile:
 - `build\Release\plugins\ClaudeUsagePlugin\claude-web-helper.ps1`
 - `build\Release\plugins\ClaudeUsagePlugin\helper\claude-web-helper\...`
 
-The project file also contains `ARM64EC` configurations, but the published release assets are currently only `x64` and `x86`.
+Release assets are x64 only. The project also builds `Win32` (used by the tests) and `ARM64EC`.
 
-## Packaging Notes
+## Try a Local Build
 
-Package the built `plugins` output as one zip per architecture.
+To run a build before releasing it, replace an installed copy the same way as [Update to a new version](install.md#update-to-a-new-version): exit TrafficMonitor, stop both helpers, then copy `build\x64\Release\plugins\ClaudeUsagePlugin.dll` and the `ClaudeUsagePlugin` folder next to it into the TrafficMonitor `plugins` folder.
 
-Recommended asset names:
+## Packaging
 
-- `TrafficMonitorAIUsageLimits_v<version>_x64.zip`
-- `TrafficMonitorAIUsageLimits_v<version>_x86.zip`
+`scripts/package-release.ps1` builds the release zip:
 
-Use [release-checklist.md](release-checklist.md) for the release flow and [release-notes-template.md](release-notes-template.md) for the GitHub release text.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version <version>
+```
+
+- Stops when `<version>` differs from `TMI_VERSION` in `src/ClaudeUsagePlugin/ClaudeUsagePlugin.cpp`
+- Rebuilds `Release|x64` (`-SkipBuild` packages the existing output)
+- Writes `dist\TrafficMonitorAIUsageLimits_v<version>_x64.zip` with only `plugins\...`: the DLL, both helpers, and `LICENSE`, `NOTICE.md`, `PRIVACY.md` under `plugins\ClaudeUsagePlugin`
+- Checks that every helper file is in the zip and prints its SHA-256
+
+Publishing follows [release-checklist.md](release-checklist.md).

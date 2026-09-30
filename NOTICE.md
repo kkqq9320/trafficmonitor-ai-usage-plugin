@@ -1,5 +1,11 @@
 # Notices
 
+## Fork
+
+This repository is a fork of [bemaru/trafficmonitor-ai-usage-plugin](https://github.com/bemaru/trafficmonitor-ai-usage-plugin), based on its v0.3.13 (`b6dfeac`). Changes after that commit are by kkqq9320 and are listed in [CHANGELOG.md](CHANGELOG.md). The original copyright notice and license in [LICENSE](LICENSE) apply to the whole project.
+
+## TrafficMonitor
+
 This project builds a plugin for [TrafficMonitor](https://github.com/zhongyang219/TrafficMonitor).
 TrafficMonitor itself is not bundled in this repository.
 
@@ -21,9 +27,9 @@ upstream interface copyright notice in `include/PluginInterface.h`.
 
 ## Bundled Helper Runtime
 
-The Claude web helper under `helper/claude-web-helper` uses Node.js built-in
-modules only. Its `package-lock.json` currently records no third-party npm
-runtime packages.
+The Claude web helper (`helper/claude-web-helper`) and the Codex usage helper
+(`helper/codex-usage-helper`) use Node.js built-in modules only. Neither has
+third-party npm runtime packages.
 
 ## Service Names
 

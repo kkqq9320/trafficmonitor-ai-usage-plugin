@@ -38,3 +38,6 @@ Desktop.ini
 
 # Helper dependencies
 helper/claude-web-helper/node_modules/
+
+# Release packages (scripts/package-release.ps1)
+dist/

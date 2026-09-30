@@ -505,7 +505,7 @@ const wchar_t* CClaudeUsagePlugin::GetInfo(PluginInfoIndex index)
         value = L"Shows Claude and Codex usage limit percentages.";
         break;
     case TMI_AUTHOR:
-        value = L"bemaru";
+        value = L"kkqq9320";
         break;
     case TMI_COPYRIGHT:
         value = L"Copyright (C) 2026";
@@ -514,7 +514,7 @@ const wchar_t* CClaudeUsagePlugin::GetInfo(PluginInfoIndex index)
         value = L"0.4.0-kkqq.1";
         break;
     case TMI_URL:
-        value = L"https://github.com/bemaru/trafficmonitor-ai-usage-plugin";
+        value = L"https://github.com/kkqq9320/trafficmonitor-ai-usage-plugin";
         break;
     default:
         value.clear();

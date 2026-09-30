@@ -3,6 +3,11 @@
 This plugin is a local TrafficMonitor integration. It does not run project
 telemetry or send usage data to a service operated by this repository.
 
+When TrafficMonitor loads the plugin, the plugin starts both helpers below in
+the background unless they are already running. They keep running after
+TrafficMonitor exits until `claude-web-helper.ps1 stop` and
+`codex-usage-helper.ps1 stop` are run.
+
 ## Claude Web Helper
 
 Claude values come from the bundled helper, not from an official public
@@ -17,7 +22,9 @@ Anthropic plugin API.
 - The helper sends cookie-authenticated requests to `https://claude.ai` for the
   active organization's usage data.
 - The helper writes local status and usage snapshot files under
-  `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin`.
+  `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin`. The snapshot holds the
+  usage limits, the plan name, model-scoped limits and the usage-limit reset
+  grants from the same usage response.
 - To refresh sooner while Claude Code is in use, the helper watches the Claude
   Code transcript folder (`%USERPROFILE%\.claude\projects`, or
   `CLAUDE_CONFIG_DIR\projects`) for file-change notifications. It only uses the
@@ -54,7 +61,8 @@ The Codex usage helper:
   `CODEX_HOME\auth.json` and sends them only to
   `https://chatgpt.com/backend-api/wham/usage`. It never refreshes, prints, or
   writes the token.
-- writes `codex-usage.json` (usage percentages, reset times, plan type) and
+- writes `codex-usage.json` (usage percentages, reset times, plan type, free
+  rate limit resets, credits balance) and
   `codex-usage-helper-status.json` (request times, error text, local paths)
   under `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin`.
 

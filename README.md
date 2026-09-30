@@ -1,157 +1,75 @@
 # TrafficMonitor AI Usage Limits
 
-![Platform](https://img.shields.io/badge/platform-Windows-0078D4)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 ![TrafficMonitor](https://img.shields.io/badge/TrafficMonitor-plugin-2EA043)
-![Arch](https://img.shields.io/badge/arch-x64%20%7C%20x86-555555)
 ![Usage Sources](https://img.shields.io/badge/usage-Claude%20%2B%20Codex-0A7F5A)
-[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-support-30363D?logo=githubsponsors&logoColor=EA4AAA)](https://github.com/sponsors/bemaru)
 
-Languages: English | [한국어](README.ko.md) | [简体中文](README.zh-CN.md)
+Languages: English | [한국어](README.ko.md)
 
-Taskbar usage limits for Claude and Codex through [TrafficMonitor](https://github.com/zhongyang219/TrafficMonitor) on Windows.
-Release packages include `ClaudeUsagePlugin.dll` plus the bundled helper files. Inside TrafficMonitor, the plugin appears as `AI Usage Limits`.
+A [TrafficMonitor](https://github.com/zhongyang219/TrafficMonitor) plugin that keeps Claude and Codex usage limits in the Windows taskbar. Inside TrafficMonitor it appears as `AI Usage Limits`.
+
+This repository is a fork of [bemaru/trafficmonitor-ai-usage-plugin](https://github.com/bemaru/trafficmonitor-ai-usage-plugin) and is released on its own. [CHANGELOG.md](CHANGELOG.md) lists what the fork adds.
 
 <p align="center">
   <img src="docs/images/trafficmonitor-taskbar-compact.png" alt="TrafficMonitor taskbar showing Claude and Codex usage bars" />
 </p>
 
-I built this because Windows did not have a convenient widget for this kind of AI usage-limit status. Claude usage can already be checked from places like Claude Code statusline, Claude Desktop, or Claude's VS Code extension, but those surfaces depend on the current workflow. The Windows taskbar stays visible across editors, terminals, and browsers, so TrafficMonitor's taskbar plugin surface was a good fit.
+## What It Shows
 
-The plugin puts Claude and Codex usage limits in that fixed taskbar location, instead of requiring separate usage pages to stay open.
+| Display setting | Label | Value |
+|---|---|---|
+| `Claude 5h`, `Claude 7d` | `C5h`, `C7d` | Claude usage used in the 5-hour and 7-day windows |
+| `Codex 5h`, `Codex 7d` | `X5h`, `X7d` | Codex usage used in the 5-hour and 7-day windows |
+| `Claude Fable 7d` (optional) | `CF7d` | Claude Fable weekly limit used |
+| `Codex credits` (optional) | `Xcr` | Codex credits balance |
+| `Claude resets`, `Codex resets` (optional) | `Crs`, `Xrs` | Usage-limit resets each account holds |
 
-## Highlights
-
-- Shows `C5h`, `C7d`, `X5h`, and `X7d` as used percentages directly in the Windows taskbar
-- Displays reset timing in the tooltip when the source exposes it
-- Uses a bundled Claude web helper for Claude values
-- Reads Codex values from local session JSONL files with `CODEX_HOME` support
-- Does not keep stale Claude values forever; stale Claude data becomes unavailable
-
-## Quick Start
-
-1. Install TrafficMonitor first:
-   - Download an official release from [TrafficMonitor Releases](https://github.com/zhongyang219/TrafficMonitor/releases)
-   - Extract it anywhere you want, then run `TrafficMonitor.exe`
-   - If you do not need temperature monitoring, the Lite package is usually enough
-2. Download the plugin zip that matches the installed TrafficMonitor build from the [latest release](https://github.com/bemaru/trafficmonitor-ai-usage-plugin/releases/latest):
-   - `TrafficMonitorAIUsageLimits_v0.3.13_x64.zip` for `x64` TrafficMonitor
-   - `TrafficMonitorAIUsageLimits_v0.3.13_x86.zip` for `x86` TrafficMonitor
-3. Extract the zip into the TrafficMonitor folder, the folder that contains `TrafficMonitor.exe`.
-   After extraction, the layout should look like this:
+Hovering over the taskbar window shows a tooltip with the percentage left, time until each reset, plan, credits and reset credits:
 
 ```text
-TrafficMonitor
-├─ TrafficMonitor.exe
-└─ plugins
-   ├─ ClaudeUsagePlugin.dll
-   └─ ClaudeUsagePlugin
-      ├─ claude-web-helper.ps1
-      └─ helper
-         └─ claude-web-helper
-            ├─ index.mjs
-            ├─ package.json
-            └─ package-lock.json
+📊 Claude left 5h 83% · 7d 17% · Fable 91%
+5h: 17% (3h 42m) at 2026-10-01 04:19 Thursday
+7d: 83% (2d 22h 22m) at 2026-10-03 22:59 Saturday
+Fable 7d: 9% (2d 22h 22m) at 2026-10-03 22:59 Saturday
+Updated: just now, Claude web helper, Plan Max (5x)
+
+📊 Codex left 7d 14%
+7d: 86% (3d 2h 43m) at 2026-10-04 03:19 Sunday
+Credits: 62,500
+Updated: 4m ago, Codex API, Plan Pro
+
+🎟 Reset Credits
+1 · Claude (Expires : 2026-10-23 01:00 Friday)
+2 · Codex  (Expires : 2026-10-23 05:39 Friday)
 ```
 
-4. Restart TrafficMonitor.
-5. Open TrafficMonitor's taskbar window and enable `Claude 5h`, `Claude 7d`, `Codex 5h`, and `Codex 7d` (and the optional `Claude Fable 7d`, `Codex credits`, `Claude resets`, `Codex resets` if you want them).
-6. Run the one-time Claude login if you want live Claude values:
+How each value is read: [docs/runtime.md](docs/runtime.md).
+
+## Quick Install
+
+Requirements: Windows x64, the x64 build of TrafficMonitor, Node.js 22 or newer, and Microsoft Edge or Google Chrome for the one-time Claude sign-in. Codex values come from Codex signed in on the same PC.
+
+1. Install Node.js if it is missing: `winget install OpenJS.NodeJS.LTS`
+2. Download `TrafficMonitorAIUsageLimits_v<version>_x64.zip` from the [latest release](https://github.com/kkqq9320/trafficmonitor-ai-usage-plugin/releases/latest).
+3. Exit TrafficMonitor, then extract the zip into the folder that contains `TrafficMonitor.exe`.
+4. Start TrafficMonitor, right-click its taskbar window, choose `Display Settings...`, and check the items you want.
+5. Sign in to Claude once. In PowerShell, from the TrafficMonitor folder:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\plugins\ClaudeUsagePlugin\claude-web-helper.ps1 login
 ```
 
-7. If Codex state is not stored in `%USERPROFILE%\.codex`, set `CODEX_HOME` in the Windows environment before launching TrafficMonitor.
-   Codex stays unavailable until a session JSONL file under that directory contains rate-limit payloads.
-
-If the helper files stay under `plugins\ClaudeUsagePlugin`, the bundled Claude watcher can auto-start on plugin load after that first login.
-
-For the full screenshot walkthrough, see [docs/install.md](docs/install.md).
-
-## What It Shows
-
-- `C` = Claude, `X` = Codex
-- `5h` = current 5-hour limit window
-- `7d` = current 7-day limit window
-- `C5h`, `C7d`, `X5h`, and `X7d` show used percentage
-- Optional items: `CF7d` (`Claude Fable 7d`) shows the Fable weekly limit, `Xcr` (`Codex credits`) the Codex credits balance, and `Crs` / `Xrs` (`Claude resets` / `Codex resets`) the usage-limit resets each account holds. See [docs/runtime.md](docs/runtime.md#runtime-model)
-- Tooltips show the same used percentage plus reset timing when reset metadata is available
-- If Codex local data reports remaining percentage, the plugin converts it before display
-
-<p align="center">
-  <img src="docs/images/trafficmonitor-tooltip.png" alt="TrafficMonitor tooltip showing Claude and Codex usage limits with reset times" />
-</p>
-
-## Data Sources
-
-- Claude reads a fresh helper snapshot from `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\claude-web-usage.json`
-- Claude helper login stores cookies in a dedicated local browser profile; see [PRIVACY.md](PRIVACY.md)
-- Codex reads local state from `%USERPROFILE%\.codex\sessions\**\*.jsonl`
-- Codex session JSONL files are the only supported local source; there is no `logs_2.sqlite` fallback
-- Codex limits are assigned by `window_minutes`, so a seven-day limit delivered as `primary` is still shown as `X7d`
-- If no session JSONL file contains rate-limit payloads yet, Codex shows unavailable
-- Codex local payloads can expose either `used_percent` or `remaining_percent`; remaining values are converted to used percentage before display
-- `CODEX_HOME` overrides the default Codex path when it resolves to a Windows-readable location
-- TrafficMonitor runs on Windows, so Linux-only paths such as `/home/<user>/.codex` are not readable
-- Claude helper usage requires Node.js 22+ plus a local Edge or Chrome install
-
-For the full runtime model and helper commands, see [docs/runtime.md](docs/runtime.md).
-
-## Compatibility
-
-- Windows only
-- TrafficMonitor plugin API v7
-- TrafficMonitor itself is not bundled by this repo
-- Official release assets are currently provided for `x64` and `x86`
-- Internal deployment names stay `ClaudeUsagePlugin.dll` and `ClaudeUsagePlugin\...` for TrafficMonitor compatibility
-
-If you do not need TrafficMonitor's temperature monitoring features, the official Lite release is usually enough.
-
-## Build From Source
-
-Requirements:
-
-- Windows
-- Visual Studio 2022 or Build Tools 2022
-- Desktop development with C++
-- MSVC `v143` toolset
-- MFC for the `v143` toolset
-- Windows SDK selected by Visual Studio
-
-Build with Visual Studio or run:
-
-```powershell
-MSBuild.exe .\ClaudeUsagePlugin.sln /t:ClaudeUsagePlugin /p:Configuration=Release /p:Platform=x64
-```
-
-Primary build outputs:
-
-- `build\x64\Release\plugins\ClaudeUsagePlugin.dll`
-- `build\Release\plugins\ClaudeUsagePlugin.dll`
-
-For the full output layout and packaging notes, see [docs/build.md](docs/build.md).
+To update an existing install, follow [Update to a new version](docs/install.md#update-to-a-new-version). The full walkthrough with screenshots is in [docs/install.md](docs/install.md).
 
 ## Docs
 
-- [Install guide](docs/install.md)
-- [Runtime and helper guide](docs/runtime.md)
-- [Build guide](docs/build.md)
+- [Install, update and uninstall](docs/install.md)
+- [Runtime, tooltip and helper settings](docs/runtime.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Build and tests](docs/build.md), [release checklist](docs/release-checklist.md)
 - [Privacy and local data](PRIVACY.md)
-- [License](LICENSE)
-- [Notices](NOTICE.md)
-- [Changelog](CHANGELOG.md)
-- [Release checklist](docs/release-checklist.md)
-- [Release notes template](docs/release-notes-template.md)
+- [Changelog](CHANGELOG.md), [license](LICENSE), [notices](NOTICE.md)
 
-## Support
+## Credits
 
-If this plugin saves you time, you can support ongoing maintenance here:
-
-- [GitHub Sponsors](https://github.com/sponsors/bemaru)
-
-## Common Issues
-
-- Plugin loads but the usage items do not appear: usually architecture mismatch or the items are not enabled yet. See [docs/install.md](docs/install.md) and [docs/troubleshooting.md](docs/troubleshooting.md).
-- Claude shows unavailable: usually the helper snapshot is missing, stale, or the Claude login expired. See [docs/runtime.md](docs/runtime.md) and [docs/troubleshooting.md](docs/troubleshooting.md).
-- Codex values do not appear: check `CODEX_HOME`, Windows path visibility, and whether Codex has written recent session JSONL rate-limit data. See [docs/troubleshooting.md](docs/troubleshooting.md).
+The original plugin was written by [bemaru](https://github.com/bemaru), who accepts support through [GitHub Sponsors](https://github.com/sponsors/bemaru). This fork is maintained by [kkqq9320](https://github.com/kkqq9320) and is not an official Anthropic, OpenAI or TrafficMonitor project.

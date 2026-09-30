@@ -1,157 +1,75 @@
 # TrafficMonitor AI Usage Limits
 
-![Platform](https://img.shields.io/badge/platform-Windows-0078D4)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 ![TrafficMonitor](https://img.shields.io/badge/TrafficMonitor-plugin-2EA043)
-![Arch](https://img.shields.io/badge/arch-x64%20%7C%20x86-555555)
 ![Usage Sources](https://img.shields.io/badge/usage-Claude%20%2B%20Codex-0A7F5A)
-[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-support-30363D?logo=githubsponsors&logoColor=EA4AAA)](https://github.com/sponsors/bemaru)
 
-언어: [English](README.md) | 한국어 | [简体中文](README.zh-CN.md)
+언어: [English](README.md) | 한국어
 
-Windows에서 [TrafficMonitor](https://github.com/zhongyang219/TrafficMonitor)를 통해 Claude와 Codex 사용량 한도를 작업 표시줄에 보여주는 플러그인입니다.
-릴리스 패키지에는 `ClaudeUsagePlugin.dll`과 포함된 helper 파일들이 들어 있습니다. TrafficMonitor 안에서는 플러그인이 `AI Usage Limits`로 표시됩니다.
+Claude와 Codex 사용량 한도를 Windows 작업 표시줄에 띄워 두는 [TrafficMonitor](https://github.com/zhongyang219/TrafficMonitor) 플러그인입니다. TrafficMonitor 안에서는 `AI Usage Limits`로 보입니다.
+
+이 저장소는 [bemaru/trafficmonitor-ai-usage-plugin](https://github.com/bemaru/trafficmonitor-ai-usage-plugin)의 fork이며 따로 릴리스합니다. fork에서 더한 기능은 [CHANGELOG.md](CHANGELOG.md)에 있습니다.
 
 <p align="center">
-  <img src="docs/images/trafficmonitor-taskbar-compact.png" alt="TrafficMonitor 작업 표시줄에 Claude와 Codex 사용량 바가 표시된 모습" />
+  <img src="docs/images/trafficmonitor-taskbar-compact.png" alt="Claude와 Codex 사용량 막대를 보여 주는 TrafficMonitor 작업 표시줄" />
 </p>
 
-Windows에서 이런 AI 사용량 한도를 편하게 볼 수 있는 적절한 위젯이 없어 만들었습니다. Claude 사용량은 Claude Code statusline, Claude Desktop, Claude의 VS Code 확장 등에서도 확인할 수 있지만, 이런 화면은 현재 작업 환경에 따라 달라집니다. 반면 Windows 작업 표시줄은 에디터, 터미널, 브라우저를 오가도 계속 보이므로 TrafficMonitor의 작업 표시줄 플러그인 방식이 잘 맞았습니다.
+## 표시하는 값
 
-이 플러그인은 별도의 사용량 페이지를 계속 열어두지 않아도 되도록 Claude와 Codex 사용량 한도를 고정된 작업 표시줄 위치에 표시합니다.
+| 표시 설정 이름 | 라벨 | 값 |
+|---|---|---|
+| `Claude 5h`, `Claude 7d` | `C5h`, `C7d` | Claude 5시간·7일 한도 사용률 |
+| `Codex 5h`, `Codex 7d` | `X5h`, `X7d` | Codex 5시간·7일 한도 사용률 |
+| `Claude Fable 7d` (선택) | `CF7d` | Claude Fable 주간 한도 사용률 |
+| `Codex credits` (선택) | `Xcr` | Codex 크레딧 잔액 |
+| `Claude resets`, `Codex resets` (선택) | `Crs`, `Xrs` | 계정별 사용량 초기화권 개수 |
 
-## 주요 기능
-
-- Windows 작업 표시줄에 `C5h`, `C7d`, `X5h`, `X7d`를 사용률 퍼센트로 표시
-- 데이터 소스가 초기화 정보를 제공하면 툴팁에 초기화 시간 표시
-- Claude 값은 포함된 Claude web helper로 읽음
-- Codex 값은 로컬 session JSONL 파일에서 읽고 `CODEX_HOME` 지원
-- 오래된 Claude 값을 계속 유지하지 않고, 만료된 데이터는 unavailable로 전환
-
-## 빠른 시작
-
-1. 먼저 TrafficMonitor를 설치합니다.
-   - [TrafficMonitor Releases](https://github.com/zhongyang219/TrafficMonitor/releases)에서 공식 릴리스를 다운로드합니다.
-   - 원하는 위치에 압축을 풀고 `TrafficMonitor.exe`를 실행합니다.
-   - 온도 모니터링이 필요 없다면 보통 Lite 패키지로 충분합니다.
-2. [최신 릴리스](https://github.com/bemaru/trafficmonitor-ai-usage-plugin/releases/latest)에서 설치한 TrafficMonitor와 같은 아키텍처의 플러그인 zip을 다운로드합니다.
-   - `x64` TrafficMonitor에는 `TrafficMonitorAIUsageLimits_v0.3.13_x64.zip`
-   - `x86` TrafficMonitor에는 `TrafficMonitorAIUsageLimits_v0.3.13_x86.zip`
-3. zip 파일을 `TrafficMonitor.exe`가 있는 TrafficMonitor 폴더에 압축 해제합니다.
-   압축 해제 후 구조는 다음과 같아야 합니다.
+작업 표시줄 창에 마우스를 올리면 남은 비율, 초기화까지 남은 시간, 요금제, 크레딧, 초기화권이 툴팁으로 나옵니다.
 
 ```text
-TrafficMonitor
-├─ TrafficMonitor.exe
-└─ plugins
-   ├─ ClaudeUsagePlugin.dll
-   └─ ClaudeUsagePlugin
-      ├─ claude-web-helper.ps1
-      └─ helper
-         └─ claude-web-helper
-            ├─ index.mjs
-            ├─ package.json
-            └─ package-lock.json
+📊 Claude left 5h 83% · 7d 17% · Fable 91%
+5h: 17% (3h 42m) at 2026-10-01 04:19 목요일
+7d: 83% (2d 22h 22m) at 2026-10-03 22:59 토요일
+Fable 7d: 9% (2d 22h 22m) at 2026-10-03 22:59 토요일
+Updated: just now, Claude web helper, Plan Max (5x)
+
+📊 Codex left 7d 14%
+7d: 86% (3d 2h 43m) at 2026-10-04 03:19 일요일
+Credits: 62,500
+Updated: 4m ago, Codex API, Plan Pro
+
+🎟 Reset Credits
+1 · Claude (Expires : 2026-10-23 01:00 금요일)
+2 · Codex  (Expires : 2026-10-23 05:39 금요일)
 ```
 
-4. TrafficMonitor를 재시작합니다.
-5. TrafficMonitor의 작업 표시줄 표시 설정에서 `Claude 5h`, `Claude 7d`, `Codex 5h`, `Codex 7d`를 활성화합니다. 필요하면 선택 항목 `Claude Fable 7d`, `Codex credits`, `Claude resets`, `Codex resets`도 켭니다.
-6. Claude 값을 실시간으로 보려면 최초 1회 Claude 로그인을 실행합니다.
+값을 읽는 방법은 [docs/runtime.md](docs/runtime.md)에 있습니다.
+
+## 빠른 설치
+
+필요한 것: Windows x64, TrafficMonitor x64판, Node.js 22 이상, Claude 첫 로그인용 Microsoft Edge 또는 Google Chrome. Codex 값은 같은 PC에서 로그인한 Codex에서 읽습니다.
+
+1. Node.js가 없으면 설치합니다: `winget install OpenJS.NodeJS.LTS`
+2. [최신 릴리스](https://github.com/kkqq9320/trafficmonitor-ai-usage-plugin/releases/latest)에서 `TrafficMonitorAIUsageLimits_v<버전>_x64.zip`을 받습니다.
+3. TrafficMonitor를 종료하고, `TrafficMonitor.exe`가 있는 폴더에 zip을 풉니다.
+4. TrafficMonitor를 실행하고 작업 표시줄 창을 우클릭해 `Display Settings...`에서 원하는 항목을 체크합니다.
+5. Claude에 한 번 로그인합니다. PowerShell에서 TrafficMonitor 폴더로 이동한 뒤 실행합니다.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\plugins\ClaudeUsagePlugin\claude-web-helper.ps1 login
 ```
 
-7. Codex 상태가 `%USERPROFILE%\.codex`에 저장되어 있지 않다면 TrafficMonitor를 실행하기 전에 Windows 환경 변수 `CODEX_HOME`을 설정합니다.
-   해당 디렉터리 아래 session JSONL 파일에 rate-limit payload가 생기기 전까지 Codex는 unavailable로 표시됩니다.
-
-helper 파일이 `plugins\ClaudeUsagePlugin` 아래에 있으면, 최초 로그인 후 플러그인 로드 시 포함된 Claude watcher가 자동으로 시작될 수 있습니다.
-
-스크린샷을 포함한 전체 설치 흐름은 [docs/install.md](docs/install.md)를 참고하세요.
-
-## 표시 항목
-
-- `C` = Claude, `X` = Codex
-- `5h` = 현재 5시간 한도 구간
-- `7d` = 현재 7일 한도 구간
-- `C5h`, `C7d`, `X5h`, `X7d`는 사용률 퍼센트를 표시
-- 선택 항목: `CF7d`(`Claude Fable 7d`)는 Fable 주간 한도, `Xcr`(`Codex credits`)는 Codex 크레딧 잔액, `Crs`·`Xrs`(`Claude resets`·`Codex resets`)는 계정별 사용량 초기화권 개수를 표시. 자세한 내용은 [docs/runtime.md](docs/runtime.md#runtime-model) 참조
-- 툴팁에는 동일한 사용률이 표시되며, 초기화 정보가 있을 때는 초기화 시간도 함께 표시됨
-- Codex 로컬 데이터가 남은 퍼센트를 제공하면 플러그인이 표시 전에 사용률로 변환
-
-<p align="center">
-  <img src="docs/images/trafficmonitor-tooltip.png" alt="Claude와 Codex 사용량 한도 및 초기화 시간이 표시된 TrafficMonitor 툴팁" />
-</p>
-
-## 데이터 소스
-
-- Claude는 `%LOCALAPPDATA%\trafficmonitor-claude-usage-plugin\claude-web-usage.json`의 최신 helper snapshot을 읽습니다.
-- Claude helper 로그인은 전용 로컬 브라우저 프로필에 쿠키를 저장합니다. 자세한 내용은 [PRIVACY.md](PRIVACY.md)를 참고하세요.
-- Codex는 `%USERPROFILE%\.codex\sessions\**\*.jsonl`의 로컬 상태를 읽습니다.
-- Codex session JSONL 파일만 지원합니다. `logs_2.sqlite` fallback은 없습니다.
-- Codex 한도는 `window_minutes`로 구분하므로, 7일 한도가 `primary`로 전달되어도 `X7d`에 표시됩니다.
-- rate-limit payload가 포함된 session JSONL 파일이 없으면 Codex는 unavailable로 표시됩니다.
-- Codex 로컬 payload는 `used_percent` 또는 `remaining_percent`를 제공할 수 있으며, 남은 값은 사용률로 변환됩니다.
-- `CODEX_HOME`은 Windows에서 읽을 수 있는 경로일 때 기본 Codex 경로를 대체합니다.
-- TrafficMonitor는 Windows에서 실행되므로 `/home/<user>/.codex` 같은 Linux 전용 경로는 읽을 수 없습니다.
-- Claude helper를 사용하려면 Node.js 22+와 로컬 Edge 또는 Chrome 설치가 필요합니다.
-
-전체 runtime 모델과 helper 명령은 [docs/runtime.md](docs/runtime.md)를 참고하세요.
-
-## 호환성
-
-- Windows 전용
-- TrafficMonitor plugin API v7
-- TrafficMonitor 본체는 이 저장소에 포함되지 않음
-- 공식 릴리스 asset은 현재 `x64`와 `x86` 제공
-- TrafficMonitor 호환성을 위해 내부 배포 이름은 `ClaudeUsagePlugin.dll` 및 `ClaudeUsagePlugin\...` 유지
-
-TrafficMonitor의 온도 모니터링 기능이 필요 없다면 공식 Lite 릴리스로 충분한 경우가 많습니다.
-
-## 소스에서 빌드
-
-필요한 환경:
-
-- Windows
-- Visual Studio 2022 또는 Build Tools 2022
-- Desktop development with C++
-- MSVC `v143` toolset
-- `v143` toolset용 MFC
-- Visual Studio에서 선택된 Windows SDK
-
-Visual Studio에서 빌드하거나 다음 명령을 실행합니다.
-
-```powershell
-MSBuild.exe .\ClaudeUsagePlugin.sln /t:ClaudeUsagePlugin /p:Configuration=Release /p:Platform=x64
-```
-
-주요 빌드 출력:
-
-- `build\x64\Release\plugins\ClaudeUsagePlugin.dll`
-- `build\Release\plugins\ClaudeUsagePlugin.dll`
-
-전체 출력 구조와 패키징 메모는 [docs/build.md](docs/build.md)를 참고하세요.
+이미 설치한 것을 새 버전으로 바꿀 때는 [새 버전으로 업데이트](docs/install.ko.md#새-버전으로-업데이트)를 따릅니다. 화면 사진이 있는 전체 설명은 [docs/install.ko.md](docs/install.ko.md)에 있습니다.
 
 ## 문서
 
-- [Install guide](docs/install.md)
-- [Runtime and helper guide](docs/runtime.md)
-- [Build guide](docs/build.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Privacy and local data](PRIVACY.md)
-- [License](LICENSE)
-- [Notices](NOTICE.md)
-- [Changelog](CHANGELOG.md)
-- [Release checklist](docs/release-checklist.md)
-- [Release notes template](docs/release-notes-template.md)
+- [설치·업데이트·제거](docs/install.ko.md) ([English](docs/install.md))
+- [동작 방식, 툴팁, helper 설정](docs/runtime.md)
+- [문제 해결](docs/troubleshooting.md)
+- [빌드와 테스트](docs/build.md), [릴리스 체크리스트](docs/release-checklist.md)
+- [개인정보와 로컬 데이터](PRIVACY.md)
+- [변경 기록](CHANGELOG.md), [라이선스](LICENSE), [고지](NOTICE.md)
 
-## 후원
+## 만든 사람
 
-이 플러그인이 시간을 절약해준다면 아래에서 유지보수를 후원할 수 있습니다.
-
-- [GitHub Sponsors](https://github.com/sponsors/bemaru)
-
-## 자주 발생하는 문제
-
-- 플러그인은 로드됐지만 사용량 항목이 보이지 않음: 보통 아키텍처가 맞지 않거나 항목이 아직 활성화되지 않은 경우입니다. [docs/install.md](docs/install.md)와 [docs/troubleshooting.md](docs/troubleshooting.md)를 참고하세요.
-- Claude가 unavailable로 표시됨: 보통 helper snapshot이 없거나 오래됐거나 Claude 로그인이 만료된 경우입니다. [docs/runtime.md](docs/runtime.md)와 [docs/troubleshooting.md](docs/troubleshooting.md)를 참고하세요.
-- Codex 값이 보이지 않음: `CODEX_HOME`, Windows 경로 접근 가능 여부, Codex가 최근 session JSONL rate-limit 데이터를 기록했는지 확인하세요. [docs/troubleshooting.md](docs/troubleshooting.md)를 참고하세요.
+원래 플러그인은 [bemaru](https://github.com/bemaru)가 만들었고, [GitHub Sponsors](https://github.com/sponsors/bemaru)로 후원을 받습니다. 이 fork는 [kkqq9320](https://github.com/kkqq9320)이 관리하며, Anthropic·OpenAI·TrafficMonitor의 공식 프로젝트가 아닙니다.

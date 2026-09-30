@@ -1,20 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.4.0-kkqq.1 - 2026-10-01
+
+First release of the kkqq9320 fork, based on bemaru v0.3.13 (`b6dfeac`). Released for x64 only.
 
 ### Added
 - Codex usage helper (`codex-usage-helper.ps1`, `helper\codex-usage-helper`). It reads the `codex` limit bucket from `codex app-server` `account/rateLimits/read`, falls back to `wham/usage` and then session JSONL, and writes `codex-usage.json`. It never sends a model request: only `initialize` / `account/rateLimits/read` and the `wham/usage` URL pass its allowlist.
 - The helper pushes new session JSONL rate-limit events immediately (file-system watcher) and asks the server every 15 minutes, after a known reset time, and when a session reports the usage limit, honoring HTTP 429 `Retry-After`.
 - `helper-config.json` for `node_path`, `claude_refresh_minutes`, `codex_server_refresh_minutes`, and `codex_path`.
 - Tooltips show data age, source, plan, and whether the Codex limit is reached. Stale values and values past their reset time are drawn dimmed.
-- The Codex tooltip lists free rate limit resets the account holds ("Reset credits: 1 (expires ...)"), taken from `rateLimitResetCredits` in `account/rateLimits/read` or `rate_limit_reset_credits` in `wham/usage`. The helper stores them as `reset_credits` in `codex-usage.json`.
-- The Claude tooltip lists the account's usage-limit reset grants the same way ("Reset credits: 1 (expires ...)"). The helper asks for them with `?cedar_ember=1` on the usage request it already makes, so no extra request is sent, and stores them as `reset_credits` in `claude-web-usage.json`. Neither helper ever uses a reset.
+- The tooltip lists the free rate limit resets the Codex account holds with the earliest expiry, taken from `rateLimitResetCredits` in `account/rateLimits/read` or `rate_limit_reset_credits` in `wham/usage`. The helper stores them as `reset_credits` in `codex-usage.json`.
+- The tooltip lists the Claude account's usage-limit reset grants the same way. The helper asks for them with `?cedar_ember=1` on the usage request it already makes, so no extra request is sent, and stores them as `reset_credits` in `claude-web-usage.json`. Neither helper ever uses a reset.
 - `Codex credits` taskbar item (`Xcr`) and a `Credits: 62,500` Codex tooltip line for the Codex credits balance, read from the `codex` bucket's `credits` in `account/rateLimits/read`, `wham/usage`, and session JSONL. The helper stores it as `credits` in `codex-usage.json`.
 - `Claude resets` (`Crs`) and `Codex resets` (`Xrs`) taskbar items for the usage-limit resets each account holds.
 - `Claude Fable 7d` taskbar item (`CF7d`) and a tooltip line for each model-scoped weekly limit, read from `limits[]` in the Claude usage response. The Claude helper stores them as `seven_day_models`, and the plan (`Max (5x)`) from the same response as `plan`; no extra request is sent.
+- `scripts/package-release.ps1` builds the x64 release zip, checks the version and that every helper file is included.
+- Korean install guide (`docs/install.ko.md`) with update and uninstall steps.
 - Regression tests for mtime-only updates, mixed limit ids, files over 32 MB, null windows, helper snapshots, and stale display; Node tests for both helpers; a Codex helper wrapper test.
 
 ### Changed
+- TrafficMonitor shows the plugin author as `kkqq9320` and links to this fork. README and install docs describe installing and updating from the fork's release zip; the Simplified Chinese README was removed.
+- The release zip puts `LICENSE`, `NOTICE.md` and `PRIVACY.md` under `plugins\ClaudeUsagePlugin` instead of the TrafficMonitor folder.
 - The plugin text starts with a `-------` line below TrafficMonitor's own lines. The tooltip has one section per service (`Claude left 5h 86% · 7d 17%` header; `7d: 83% (2d 22h 30m) at 2026-10-03 22:59 <weekday>` lines; `Updated: just now, Claude web helper, Plan Max (5x)`) and ends with a `Reset Credits` section listing both services.
 - The plugin prefers the Codex helper snapshot and re-reads it only when its write time changes. Session JSONL is the fallback.
 - The Claude helper refreshes every 5 minutes by default instead of every 60 seconds, keeps the last snapshot on HTTP 429, and waits for `Retry-After`. The plugin accepts Claude snapshots up to 30 minutes old.
