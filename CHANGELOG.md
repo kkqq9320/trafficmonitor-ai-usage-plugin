@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0-kkqq.2 - 2026-10-13
 
 ### Fixed
 - After a Windows restart the Claude or Codex helper could stay stopped, and its values went unavailable 30 minutes later. When Windows gave the PID in a helper's watch lock to another process, the plugin took it for a running watcher and skipped `start`. The plugin now runs `start` for both helpers every time it loads; `start` already tells a running watcher from a reused PID.

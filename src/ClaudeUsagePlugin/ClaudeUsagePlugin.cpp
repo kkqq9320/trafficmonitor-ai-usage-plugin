@@ -511,7 +511,7 @@ const wchar_t* CClaudeUsagePlugin::GetInfo(PluginInfoIndex index)
         value = L"Copyright (C) 2026";
         break;
     case TMI_VERSION:
-        value = L"0.4.0-kkqq.1";
+        value = L"0.4.0-kkqq.2";
         break;
     case TMI_URL:
         value = L"https://github.com/kkqq9320/trafficmonitor-ai-usage-plugin";
