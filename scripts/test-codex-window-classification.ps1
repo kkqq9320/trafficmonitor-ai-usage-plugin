@@ -66,6 +66,8 @@ $scenarios = @(
     'claude-reset-credits',
     'claude-reset-credits-no-expiry',
     'claude-snapshot-read-retry',
+    'codex-note-helper-running',
+    'codex-note-reused-pid',
     'helper-autostart-reused-pid'
 )
 

@@ -4,6 +4,7 @@
 
 ### Fixed
 - After a Windows restart the Claude or Codex helper could stay stopped, and its values went unavailable 30 minutes later. When Windows gave the PID in a helper's watch lock to another process, the plugin took it for a running watcher and skipped `start`. The plugin now runs `start` for both helpers every time it loads; `start` already tells a running watcher from a reused PID.
+- The Codex tooltip left out `Codex usage helper is not running` when Windows had given the watch lock's PID to another process. The plugin now counts the helper as running only when that process started within 30 seconds of the lock's `started_at`, as the helper scripts do.
 
 ## 0.4.0-kkqq.1 - 2026-10-01
 

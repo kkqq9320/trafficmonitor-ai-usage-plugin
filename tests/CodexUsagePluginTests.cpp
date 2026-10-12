@@ -38,6 +38,16 @@ long long NowUnix()
     return static_cast<long long>(std::time(nullptr));
 }
 
+long long ProcessStartUnix()
+{
+    FILETIME creation{}, exit_time{}, kernel_time{}, user_time{};
+    GetProcessTimes(GetCurrentProcess(), &creation, &exit_time, &kernel_time, &user_time);
+    ULARGE_INTEGER value{};
+    value.LowPart = creation.dwLowDateTime;
+    value.HighPart = creation.dwHighDateTime;
+    return static_cast<long long>((value.QuadPart - 116444736000000000ULL) / 10000000ULL);
+}
+
 std::string IsoUtc(long long unix_seconds)
 {
     const std::time_t value = static_cast<std::time_t>(unix_seconds);
@@ -439,6 +449,19 @@ std::vector<Scenario> BuildScenarios()
         L"\n7d: 34% (",
         L"Codex session log, Plan Plus",
     }, {}, nullptr });
+
+    // Only a process that started within 30 seconds of the lock's started_at counts as the Codex helper, so a PID
+    // that Windows gave to another process after a restart is reported as a stopped helper.
+    auto codex_watch_lock = [](const wchar_t* name, long long started_after_process, bool running) {
+        return Scenario{ name, [started_after_process](const Fixture& fixture) {
+            WriteText(fixture.plugin_cache / L"codex-usage-helper-watch.lock", R"({ "pid": )" + std::to_string(GetCurrentProcessId()) +
+                R"(, "mode": "watch", "started_at": ")" + IsoUtc(ProcessStartUnix() + started_after_process) + R"(", "refresh_ms": 900000 })" + "\n");
+        }, L"--", L"--", {}, {}, [running](const Fixture&, ITMPlugin* plugin) {
+            return ExpectTooltip(plugin, L"Codex usage helper is not running", !running);
+        } };
+    };
+    scenarios.push_back(codex_watch_lock(L"codex-note-helper-running", 1, true));
+    scenarios.push_back(codex_watch_lock(L"codex-note-reused-pid", -3600, false));
 
     // After a restart Windows can give a helper's old PID to another process. The plugin must still ask both
     // helpers to start; `start` itself tells a running watcher from a reused PID.

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "HelperSupport.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cwctype>
 #include <vector>
@@ -11,6 +12,36 @@ namespace
 {
 constexpr wchar_t PLUGIN_CACHE_DIR_NAME[] = L"trafficmonitor-claude-usage-plugin";
 constexpr unsigned long long FILETIME_UNIX_EPOCH = 116444736000000000ULL;
+// Same tolerance as the helper scripts' watch lock check.
+constexpr long long WATCH_LOCK_START_TOLERANCE_SECONDS = 30;
+
+bool FileTimeToUnixSeconds(const FILETIME& file_time, long long& unix_seconds)
+{
+    ULARGE_INTEGER value{};
+    value.LowPart = file_time.dwLowDateTime;
+    value.HighPart = file_time.dwHighDateTime;
+    if (value.QuadPart < FILETIME_UNIX_EPOCH)
+        return false;
+    unix_seconds = static_cast<long long>((value.QuadPart - FILETIME_UNIX_EPOCH) / 10000000ULL);
+    return true;
+}
+
+bool TryGetLockStartedAt(const std::string& lock_json, long long& unix_seconds)
+{
+    const size_t key_pos = lock_json.find("\"started_at\"");
+    if (key_pos == std::string::npos)
+        return false;
+    const size_t colon_pos = lock_json.find(':', key_pos + 12);
+    if (colon_pos == std::string::npos)
+        return false;
+    const size_t value_start = lock_json.find('"', colon_pos + 1);
+    if (value_start == std::string::npos)
+        return false;
+    const size_t value_end = lock_json.find('"', value_start + 1);
+    if (value_end == std::string::npos)
+        return false;
+    return TryParseIso8601UtcSeconds(lock_json.substr(value_start + 1, value_end - value_start - 1), unix_seconds);
+}
 
 std::wstring GetCurrentModulePath()
 {
@@ -270,13 +301,41 @@ bool IsWatchLockProcessRunning(const std::wstring& lock_path)
     if (process_id == 0)
         return false;
 
+    // The watcher writes started_at as it starts; a PID that Windows reused after a restart belongs to a
+    // process that started later.
+    long long lock_started_at{};
+    if (!TryGetLockStartedAt(lock_json, lock_started_at))
+        return false;
+
     HANDLE process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(process_id));
     if (process_handle == nullptr)
         return false;
     DWORD exit_code{};
-    const BOOL succeeded = GetExitCodeProcess(process_handle, &exit_code);
+    FILETIME creation_time{}, exit_time{}, kernel_time{}, user_time{};
+    long long process_started_at{};
+    const bool alive = GetExitCodeProcess(process_handle, &exit_code) && exit_code == STILL_ACTIVE &&
+        GetProcessTimes(process_handle, &creation_time, &exit_time, &kernel_time, &user_time) &&
+        FileTimeToUnixSeconds(creation_time, process_started_at);
     CloseHandle(process_handle);
-    return succeeded && exit_code == STILL_ACTIVE;
+    return alive && std::llabs(process_started_at - lock_started_at) <= WATCH_LOCK_START_TOLERANCE_SECONDS;
+}
+
+bool TryParseIso8601UtcSeconds(const std::string& timestamp, long long& unix_seconds)
+{
+    int year{}, month{}, day{}, hour{}, minute{}, second{};
+    if (sscanf_s(timestamp.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d", &year, &month, &day, &hour, &minute, &second) != 6)
+        return false;
+
+    SYSTEMTIME utc_time{};
+    utc_time.wYear = static_cast<WORD>(year);
+    utc_time.wMonth = static_cast<WORD>(month);
+    utc_time.wDay = static_cast<WORD>(day);
+    utc_time.wHour = static_cast<WORD>(hour);
+    utc_time.wMinute = static_cast<WORD>(minute);
+    utc_time.wSecond = static_cast<WORD>(second);
+
+    FILETIME file_time{};
+    return SystemTimeToFileTime(&utc_time, &file_time) && FileTimeToUnixSeconds(file_time, unix_seconds);
 }
 
 std::wstring FindBundledScript(const wchar_t* script_file_name)

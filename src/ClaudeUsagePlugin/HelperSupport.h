@@ -28,7 +28,10 @@ std::wstring FormatAgeText(long long age_seconds);
 bool UnixSecondsToLocalText(long long unix_seconds, std::wstring& text);
 std::wstring Utf8ToWide(const std::string& text);
 
-// True when the watch lock names a live process id.
+// Reads "2026-09-23T08:12:08Z" as UTC Unix seconds; anything after the seconds is ignored.
+bool TryParseIso8601UtcSeconds(const std::string& timestamp, long long& unix_seconds);
+
+// True when the watch lock names a live process that started within 30 seconds of the lock's started_at.
 bool IsWatchLockProcessRunning(const std::wstring& lock_path);
 
 // Finds <plugins>\ClaudeUsagePlugin\<script_file_name> next to this DLL (or the repo scripts dir).

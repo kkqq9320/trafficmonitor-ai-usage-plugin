@@ -173,32 +173,6 @@ bool TryGetJsonString(const std::string& json, const char* key, std::string& val
     return false;
 }
 
-bool TryParseIso8601UtcSeconds(const std::string& timestamp, long long& unix_seconds)
-{
-    int year{}, month{}, day{}, hour{}, minute{}, second{};
-    if (sscanf_s(timestamp.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d", &year, &month, &day, &hour, &minute, &second) != 6)
-        return false;
-
-    SYSTEMTIME utc_time{};
-    utc_time.wYear = static_cast<WORD>(year);
-    utc_time.wMonth = static_cast<WORD>(month);
-    utc_time.wDay = static_cast<WORD>(day);
-    utc_time.wHour = static_cast<WORD>(hour);
-    utc_time.wMinute = static_cast<WORD>(minute);
-    utc_time.wSecond = static_cast<WORD>(second);
-
-    FILETIME file_time{};
-    if (!SystemTimeToFileTime(&utc_time, &file_time))
-        return false;
-    ULARGE_INTEGER value{};
-    value.LowPart = file_time.dwLowDateTime;
-    value.HighPart = file_time.dwHighDateTime;
-    if (value.QuadPart < 116444736000000000ULL)
-        return false;
-    unix_seconds = static_cast<long long>((value.QuadPart - 116444736000000000ULL) / 10000000ULL);
-    return true;
-}
-
 // --- rate limit parsing -------------------------------------------------------
 
 bool LoadMetricObject(const std::string& metric_json, Metric& metric)
@@ -397,7 +371,7 @@ bool ParseRateLimitEventLine(const std::string& line, RateLimitRecord& record)
         return false;
 
     std::string timestamp;
-    if (!TryGetJsonString(line, "timestamp", timestamp) || !TryParseIso8601UtcSeconds(timestamp, record.data_at_unix))
+    if (!TryGetJsonString(line, "timestamp", timestamp) || !helper_support::TryParseIso8601UtcSeconds(timestamp, record.data_at_unix))
         return false;
 
     std::string text;
@@ -682,7 +656,7 @@ std::wstring BuildHelperNote(bool helper_fresh)
         note = L"Codex usage helper: server rate limited";
         long long retry_unix{};
         std::wstring retry_text;
-        if (!retry_after.empty() && TryParseIso8601UtcSeconds(retry_after, retry_unix) && helper_support::UnixSecondsToLocalText(retry_unix, retry_text))
+        if (!retry_after.empty() && helper_support::TryParseIso8601UtcSeconds(retry_after, retry_unix) && helper_support::UnixSecondsToLocalText(retry_unix, retry_text))
             note += L", retry after " + retry_text;
     }
     else if (state == "auth_required")
