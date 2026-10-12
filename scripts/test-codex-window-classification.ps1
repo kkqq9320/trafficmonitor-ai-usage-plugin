@@ -65,7 +65,8 @@ $scenarios = @(
     'claude-snapshot-update',
     'claude-reset-credits',
     'claude-reset-credits-no-expiry',
-    'claude-snapshot-read-retry'
+    'claude-snapshot-read-retry',
+    'helper-autostart-reused-pid'
 )
 
 foreach ($scenario in $scenarios) {

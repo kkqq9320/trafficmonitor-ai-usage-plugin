@@ -717,8 +717,7 @@ void CCodexUsageData::AutoStartBundledHelperIfNeeded()
         m_helper_auto_start_attempted = true;
     }
 
-    if (helper_support::IsWatchLockProcessRunning(helper_support::GetPluginCachePath(WATCH_LOCK_FILE_NAME)))
-        return;
+    // Always ask; see CClaudeUsageData::AutoStartBundledHelperIfNeeded.
     const std::wstring script_path = helper_support::FindBundledScript(HELPER_SCRIPT_NAME);
     if (!script_path.empty())
         helper_support::LaunchBundledScript(script_path, L"start");

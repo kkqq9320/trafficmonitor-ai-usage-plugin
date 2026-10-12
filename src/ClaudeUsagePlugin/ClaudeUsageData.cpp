@@ -24,7 +24,6 @@ constexpr unsigned long long MAX_JSON_FILE_SIZE = 1024ULL * 1024ULL;
 constexpr wchar_t PLUGIN_CACHE_DIR_NAME[] = L"trafficmonitor-claude-usage-plugin";
 constexpr wchar_t HELPER_CACHE_FILE_NAME[] = L"claude-web-usage.json";
 constexpr wchar_t HELPER_STATUS_FILE_NAME[] = L"claude-web-helper-status.json";
-constexpr wchar_t HELPER_WATCH_LOCK_FILE_NAME[] = L"claude-web-helper-watch.lock";
 
 std::wstring GetEnvVar(const wchar_t* name)
 {
@@ -92,11 +91,6 @@ std::wstring GetHelperCachePath()
 std::wstring GetHelperStatusPath()
 {
     return BuildCachePath(GetPluginCacheDir(), HELPER_STATUS_FILE_NAME);
-}
-
-std::wstring GetHelperWatchLockPath()
-{
-    return BuildCachePath(GetPluginCacheDir(), HELPER_WATCH_LOCK_FILE_NAME);
 }
 
 std::wstring GetDirectoryPath(const std::wstring& path)
@@ -877,9 +871,8 @@ void CClaudeUsageData::AutoStartBundledHelperIfNeeded()
         m_helper_auto_start_attempted = true;
     }
 
-    if (helper_support::IsWatchLockProcessRunning(GetHelperWatchLockPath()))
-        return;
-
+    // Always ask: a live PID in the watch lock can belong to another process after a restart, and
+    // `start` checks the lock's process name, command line and start time before starting a watcher.
     const std::wstring script_path = helper_support::FindBundledScript(L"claude-web-helper.ps1");
     if (!script_path.empty())
         helper_support::LaunchBundledScript(script_path, L"start");

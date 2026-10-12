@@ -30,6 +30,7 @@ struct Fixture
     fs::path root;
     fs::path sessions;
     fs::path plugin_cache;
+    fs::path plugin_dll;
 };
 
 long long NowUnix()
@@ -439,6 +440,60 @@ std::vector<Scenario> BuildScenarios()
         L"Codex session log, Plan Plus",
     }, {}, nullptr });
 
+    // After a restart Windows can give a helper's old PID to another process. The plugin must still ask both
+    // helpers to start; `start` itself tells a running watcher from a reused PID.
+    scenarios.push_back(Scenario{ L"helper-autostart-reused-pid", [](const Fixture& fixture) {
+        const std::string lock = R"({ "pid": )" + std::to_string(GetCurrentProcessId()) + R"(, "mode": "watch", "started_at": ")" +
+            IsoUtc(NowUnix() - 3600) + R"(", "refresh_ms": 300000 })" + "\n";
+        WriteText(fixture.plugin_cache / L"claude-web-helper-watch.lock", lock);
+        WriteText(fixture.plugin_cache / L"codex-usage-helper-watch.lock", lock);
+    }, L"--", L"--", {}, {}, [](const Fixture& fixture, ITMPlugin*) {
+        // A copy of the DLL next to stub scripts that record their argument, so no real helper starts.
+        const fs::path script_dir = fixture.root / L"plugins" / L"ClaudeUsagePlugin";
+        const fs::path dll = fixture.root / L"plugins" / L"AutoStartTestPlugin.dll";
+        const wchar_t* scripts[] = { L"claude-web-helper.ps1", L"codex-usage-helper.ps1" };
+        for (const wchar_t* script : scripts)
+            WriteText(script_dir / script, "Set-Content -LiteralPath ($PSCommandPath + '.called') -Value $args[0] -Encoding ASCII\n");
+        std::error_code error;
+        fs::copy_file(fixture.plugin_dll, dll, error);
+        HMODULE module = error ? nullptr : LoadLibraryW(dll.c_str());
+        const auto get_instance = module == nullptr ? nullptr : reinterpret_cast<GetPluginInstance>(GetProcAddress(module, "TMPluginGetInstance"));
+        if (get_instance == nullptr)
+        {
+            std::wcerr << L"Could not load the plugin copy.\n";
+            return false;
+        }
+        get_instance()->OnInitialize(nullptr);
+
+        bool passed = true;
+        const unsigned long long deadline = GetTickCount64() + 20000;
+        for (const wchar_t* script : scripts)
+        {
+            const fs::path marker = script_dir / (std::wstring(script) + L".called");
+            while (GetTickCount64() < deadline)
+            {
+                std::error_code missing;
+                const auto size = fs::file_size(marker, missing);
+                if (!missing && size > 0)
+                    break;
+                Sleep(250);
+            }
+            std::ifstream input(marker);
+            std::string argument;
+            std::getline(input, argument);
+            if (!argument.empty() && argument.back() == '\r')
+                argument.pop_back();
+            if (argument != "start")
+            {
+                std::wcerr << script << L" was not called with start (got \"" << std::wstring(argument.begin(), argument.end()) << L"\").\n";
+                passed = false;
+            }
+        }
+        FreeLibrary(module);
+        Sleep(1000);  // lets the stub PowerShell processes leave the fixture directory before cleanup
+        return passed;
+    } });
+
     return scenarios;
 }
 
@@ -531,6 +586,7 @@ int wmain(int argc, wchar_t* argv[])
     fixture.root = fs::temp_directory_path() / (L"trafficmonitor-ai-usage-plugin-test-" + std::to_wstring(GetCurrentProcessId()));
     fixture.sessions = fixture.root / L"codex" / L"sessions" / L"2026" / L"09" / L"23";
     fixture.plugin_cache = fixture.root / L"local" / L"trafficmonitor-claude-usage-plugin";
+    fixture.plugin_dll = argv[1];
     fs::create_directories(fixture.sessions);
     fs::create_directories(fixture.plugin_cache);
     scenario->build(fixture);

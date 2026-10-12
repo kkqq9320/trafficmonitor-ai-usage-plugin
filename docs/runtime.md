@@ -159,7 +159,7 @@ The plugin starts the Codex watcher on load, the same way as the Claude watcher.
 ## Operational Notes
 
 - `login` is the only interactive step
-- If `claude-web-helper.ps1` plus `helper\claude-web-helper\...` are bundled under `plugins\ClaudeUsagePlugin`, the plugin can auto-start the helper watcher on plugin load
+- If `claude-web-helper.ps1` plus `helper\claude-web-helper\...` are bundled under `plugins\ClaudeUsagePlugin`, the plugin runs the helper's `start` each time it loads. `start` itself decides from the validated watch lock whether a watcher is already running, so a lock whose PID Windows gave to another process after a restart does not keep the helper from starting
 - Close the helper browser window before `start` or `watch`, otherwise the Chromium cookies database may stay locked
 - The helper decrypts Chromium cookies under the same Windows user that completed the helper login
 - The helper uses only Node built-ins under `helper\claude-web-helper`; no Playwright install is required

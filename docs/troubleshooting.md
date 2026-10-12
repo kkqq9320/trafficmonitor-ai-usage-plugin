@@ -28,16 +28,16 @@ powershell -ExecutionPolicy Bypass -File .\plugins\ClaudeUsagePlugin\claude-web-
 Close the helper browser window that was opened by `login`, then run `start` again.
 Use `watch` only for foreground troubleshooting.
 
-### Claude helper reports an old watcher after Windows restarts
+### Claude or Codex values disappear after Windows restarts
 
-Plugin `v0.3.13` and newer validates the process behind
-`claude-web-helper-watch.lock` by name, command line, and start time. If Windows
-reused the recorded PID for another process, `status` or `start` removes the
-stale lock without terminating that unrelated process.
+After a restart Windows can give the PID recorded in a helper's watch lock to another process.
+`status` and `start` check the process behind the lock by name, command line, and start time, and remove a stale lock without terminating that process; `start` then starts the watcher.
+The plugin runs `start` for both helpers each time TrafficMonitor loads it, so restarting TrafficMonitor recovers.
+To recover without restarting it:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\plugins\ClaudeUsagePlugin\claude-web-helper.ps1 status
 powershell -ExecutionPolicy Bypass -File .\plugins\ClaudeUsagePlugin\claude-web-helper.ps1 start
+powershell -ExecutionPolicy Bypass -File .\plugins\ClaudeUsagePlugin\codex-usage-helper.ps1 start
 ```
 
 ### Claude helper status shows `rate_limited` or `request_failed`
